@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Simmer",
+    "slug": "simmer-meal-planner",
+    "scheme": "simmer",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "bundleIdentifier": "com.automatestuff.simmer", "supportsTablet": true },
+    "android": { "package": "com.automatestuff.simmer", "edgeToEdgeEnabled": true },
+    "web": { "bundler": "metro", "output": "single", "name": "Simmer", "shortName": "Simmer", "themeColor": "#1F9D55", "backgroundColor": "#FFFFFF", "display": "standalone" },
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true }
+  }
+}
