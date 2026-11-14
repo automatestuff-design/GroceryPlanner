@@ -55,7 +55,7 @@ side rail and two-pane chat on tablets and desktop.
 
 ## Auth and data
 
-- **Sign-in:** Supabase Auth, passwordless. The app emails a 6-digit code
+- **Sign-in:** Supabase Auth, passwordless. The app emails a one-time code (6–10 digits, per the project's Email OTP Length)
   (`signInWithOtp` + `verifyOtp`), keeps the session in AsyncStorage (native) or
   localStorage (web), and refreshes tokens while in the foreground. `Stack.Protected` in
   `app/_layout.tsx` keeps signed-out users on `/sign-in`.

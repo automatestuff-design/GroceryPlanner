@@ -5,9 +5,13 @@ import { useAuth } from "@/lib/auth";
 import { font, radius, space, useTheme } from "@/theme";
 
 /**
- * Passwordless sign-in: we email a 6-digit code. Codes work the same on iOS,
+ * Passwordless sign-in: we email a one-time code. Codes work the same on iOS,
  * Android and desktop, with no deep-link setup, and a new email creates an account.
  */
+/** Supabase lets each project set its email code length (Auth → Email → Email OTP Length), from 6 to 10 digits. */
+const OTP_MIN = 6;
+const OTP_MAX = 10;
+
 export default function SignIn() {
   const c = useTheme();
   const { sendCode, verifyCode } = useAuth();
@@ -43,13 +47,13 @@ export default function SignIn() {
           </>
         ) : (
           <>
-            <Muted>We sent a 6-digit code to {email}.</Muted>
+            <Muted>We sent a sign-in code to {email}.</Muted>
             <TextInput
-              value={code} onChangeText={(t) => setCode(t.replace(/\D/g, "").slice(0, 6))} placeholder="123456" placeholderTextColor={c.muted}
+              value={code} onChangeText={(t) => setCode(t.replace(/\D/g, "").slice(0, OTP_MAX))} placeholder="Code" placeholderTextColor={c.muted}
               keyboardType="number-pad" inputMode="numeric" autoComplete="one-time-code" textContentType="oneTimeCode" style={[input, styles.code]}
               onSubmitEditing={() => run(() => verifyCode(email.trim(), code))}
             />
-            <Button label={busy ? "Checking…" : "Sign in"} disabled={busy || code.length !== 6} onPress={() => run(() => verifyCode(email.trim(), code))} />
+            <Button label={busy ? "Checking…" : "Sign in"} disabled={busy || code.length < OTP_MIN} onPress={() => run(() => verifyCode(email.trim(), code))} />
             <Button label="Use a different email" variant="ghost" onPress={() => { setStep("email"); setCode(""); }} />
           </>
         )}

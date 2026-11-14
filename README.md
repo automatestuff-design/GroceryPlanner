@@ -72,7 +72,7 @@ header, and the app skips sign-in. Dev mode refuses to start when `NODE_ENV=prod
    Don't run `supabase/test/supabase-stubs.sql` on a real project. It stands in for Supabase's
    own `auth` schema in local tests only.
 2. **Auth → Providers → Email:** keep it on. **Auth → Email Templates → Magic Link:** include
-   `{{ .Token }}` so the email carries a 6-digit code (the app signs in with codes, which work
+   `{{ .Token }}` so the email carries a one-time code (6–10 digits, set under Email OTP Length; the app signs in with codes, which work
    the same on iOS, Android and desktop without deep links).
 3. Fill the root `.env` (API, server only): `SUPABASE_URL`, `DATABASE_URL` (dashboard **Connect** →
    Session pooler URI, with your database password), and `APP_SECRET_KEY` (`openssl rand -base64 32`).
