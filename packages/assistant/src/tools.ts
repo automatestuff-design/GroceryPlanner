@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
-  WEEKDAYS, buildShoppingList, defaultSlots, generateWeekPlan, swapMeal, weeklyLongevityReport,
-  dailyTargets, type Household, type Member, type PlanRequest, type Recipe,
+  WEEKDAYS, buildShoppingList, defaultSlots, generateWeekPlan, swapMeal, weeklyLongevityReport, queryForPlan,
+  dailyTargets, type Household, type Member, type PlanRequest, type Recipe, type RecipeProvider, type WeekPlan,
 } from "@mealplan/core";
 import type { GrocerRegistry } from "@mealplan/grocers";
 import type { Card } from "./cards";
@@ -27,8 +27,11 @@ const MemberInput = z.strictObject({
 export interface ToolContext {
   userId: string;
   store: PlannerStore;
+  recipes: RecipeProvider;
   grocers: GrocerRegistry;
   cards: Card[];
+  /** Imports a recipe page into this household's private library. Absent when importing is disabled. */
+  importRecipe?: (url: string) => Promise<Recipe>;
 }
 
 interface ToolDef<S extends z.ZodType> {
@@ -92,10 +95,10 @@ export const TOOLS = {
       maxCookMinutes: z.number().int().optional(),
       leftovers: z.boolean().optional().describe("Cook dinner once and eat it again for the next day's lunch"),
       weekStart: z.string().optional().describe("ISO date of the Monday. Default: next Monday"),
+      focus: z.string().optional().describe("Ingredient or style to lean towards, e.g. 'salmon', 'sheet pan', 'mexican'"),
     }),
     run: async (input, ctx) => {
       const household = await ctx.store.getHousehold(ctx.userId);
-      const recipes = await ctx.store.recipes();
       const days = input.days ?? WEEKDAYS;
       const all = defaultSlots(household.mode, input.mealTypes);
       const slots = Object.fromEntries(days.map((d) => [d, all[d] ?? []]));
@@ -105,6 +108,9 @@ export const TOOLS = {
         weekStart: input.weekStart ?? nextMonday(), maxCookMinutes: input.maxCookMinutes, leftovers: input.leftovers,
         seed: (prev?.request.seed ?? 0) + 1,
       };
+      let recipes = await ctx.recipes.search({ ...queryForPlan(request, input.focus), seed: request.seed });
+      if (input.focus && recipes.length < 7) recipes = [...recipes, ...(await ctx.recipes.search({ ...queryForPlan(request), seed: request.seed }))];
+      if (!recipes.length) throw new Error("No recipes match this household's diet, allergies and time limit.");
       const plan = generateWeekPlan(request, recipes);
       await ctx.store.savePlan(plan, request);
       ctx.cards.push(planCard(plan, recipes));
@@ -116,9 +122,11 @@ export const TOOLS = {
     description: "Replace one planned meal with the next-best option that fits the household.",
     input: z.strictObject({ day: Weekday, slot: MealType }),
     run: async (input, ctx) => {
-      const { current, recipes } = await requirePlan(ctx);
-      const plan = swapMeal(current.plan, input.day, input.slot, current.request, recipes);
+      const { current, recipes: inPlan } = await requirePlan(ctx);
+      const pool = await ctx.recipes.search({ ...queryForPlan(current.request), seed: (current.request.seed ?? 0) + 100 });
+      const plan = swapMeal(current.plan, input.day, input.slot, current.request, pool);
       await ctx.store.savePlan(plan, current.request);
+      const recipes = [...inPlan, ...pool];
       ctx.cards.push(planCard(plan, recipes));
       return summarisePlan(plan, recipes);
     },
@@ -143,6 +151,16 @@ export const TOOLS = {
       const report = weeklyLongevityReport(current.plan.meals, byId(recipes));
       ctx.cards.push({ type: "longevity", report });
       return report;
+    },
+  }),
+
+  import_recipe_from_url: tool({
+    description: "Save a recipe from a web page the user shares into their household's private recipe library, so the planner can use it. Only works for pages that publish nutrition information.",
+    input: z.strictObject({ url: z.string().describe("The recipe page URL the user gave") }),
+    run: async (input, ctx) => {
+      if (!ctx.importRecipe) throw new Error("Recipe import isn't available right now.");
+      const r = await ctx.importRecipe(input.url);
+      return { id: r.id, title: r.title, servings: r.servings, minutes: r.timeMinutes, perServing: r.nutritionPerServing, mealTypes: r.mealTypes };
     },
   }),
 
@@ -200,7 +218,8 @@ async function requirePlan(ctx: ToolContext) {
   const household = await ctx.store.getHousehold(ctx.userId);
   const current = await ctx.store.getCurrentPlan(household.id);
   if (!current) throw new Error("There is no plan yet. Create one with create_week_plan.");
-  return { household, current, recipes: await ctx.store.recipes() };
+  const recipes = await ctx.recipes.getMany([...new Set(current.plan.meals.map((m) => m.recipeId))]);
+  return { household, current, recipes };
 }
 
 function upsertMembers(existing: Member[], upserts: z.infer<typeof MemberInput>[], removals: string[]): Member[] {
@@ -208,22 +227,23 @@ function upsertMembers(existing: Member[], upserts: z.infer<typeof MemberInput>[
   for (const u of upserts) {
     const i = out.findIndex((m) => m.name.toLowerCase() === u.name.toLowerCase());
     if (i >= 0) out[i] = { ...out[i]!, ...u, allergies: u.allergies ?? out[i]!.allergies, dislikes: u.dislikes ?? out[i]!.dislikes };
-    else out.push({ id: `m_${crypto.randomUUID().slice(0, 8)}`, ...u, allergies: u.allergies ?? [], dislikes: u.dislikes ?? [] });
+    else out.push({ id: crypto.randomUUID(), ...u, allergies: u.allergies ?? [], dislikes: u.dislikes ?? [] });
   }
   return out;
 }
 
 const byId = (recipes: Recipe[]) => new Map(recipes.map((r) => [r.id, r]));
 
-function planCard(plan: Parameters<typeof summarisePlan>[0], recipes: Recipe[]): Card {
+function planCard(plan: WeekPlan, recipes: Recipe[]): Card {
   const ids = new Set(plan.meals.map((m) => m.recipeId));
   return {
     type: "plan", plan,
-    recipes: recipes.filter((r) => ids.has(r.id)).map(({ id, title, timeMinutes, nutritionPerServing, imageUrl }) => ({ id, title, timeMinutes, nutritionPerServing, imageUrl })),
+    recipes: [...new Map(recipes.filter((r) => ids.has(r.id)).map((r) => [r.id, r])).values()]
+      .map(({ id, title, timeMinutes, nutritionPerServing, imageUrl, source }) => ({ id, title, timeMinutes, nutritionPerServing, imageUrl, source })),
   };
 }
 
-function summarisePlan(plan: import("@mealplan/core").WeekPlan, recipes: Recipe[]) {
+function summarisePlan(plan: WeekPlan, recipes: Recipe[]) {
   const map = byId(recipes);
   return {
     weekStart: plan.weekStart, strategy: plan.strategy, track: plan.track,

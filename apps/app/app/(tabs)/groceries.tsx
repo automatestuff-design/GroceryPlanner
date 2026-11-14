@@ -42,6 +42,12 @@ export default function GroceriesScreen() {
                 onPress={() => order(g.id)}
               />
               {g.banners?.length ? <Muted>{g.banners.join(" · ")}</Muted> : null}
+              {g.id === "kroger" && g.configured && (
+                <Button label="Link my Kroger account" variant="ghost" onPress={async () => {
+                  const { url } = await api.linkKroger();
+                  await WebBrowser.openBrowserAsync(url);
+                }} />
+              )}
             </View>
           ))}
         </Card>

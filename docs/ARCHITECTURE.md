@@ -13,7 +13,8 @@
          ▼              ▼
    core engine: planner · portions · macros · shopping list · longevity    (pure, tested)
          │
-         ├── PlannerStore → Supabase Postgres (RLS)  |  MemoryStore in dev/tests
+         ├── PlannerStore → PostgresStore (as the user, RLS)  |  MemoryStore in dev
+         ├── RecipeProvider → Postgres catalog + Spoonacular + Edamam (cached ≤1h)
          └── grocers registry → Instacart · Kroger · (Walmart · Amazon · Target via partners)
 ```
 
@@ -52,8 +53,23 @@ side rail and two-pane chat on tablets and desktop.
 - **Portions:** adult 1.0, teen 1.15, child 0.6, toddler 0.35 servings (tunable per member).
 - **Macros:** Mifflin-St Jeor energy × activity; protein 1.2 g/kg standard, 1.6 g/kg Longevity.
 
-## Auth and data (next step)
+## Auth and data
 
-Supabase magic-link auth. The API verifies the Supabase JWT (replacing the `x-user-id`
-placeholder) and implements `PlannerStore` over the tables in `supabase/migrations`.
-Two adults can share one household through `household_users`.
+- **Sign-in:** Supabase Auth, passwordless. The app emails a 6-digit code
+  (`signInWithOtp` + `verifyOtp`), keeps the session in AsyncStorage (native) or
+  localStorage (web), and refreshes tokens while in the foreground. `Stack.Protected` in
+  `app/_layout.tsx` keeps signed-out users on `/sign-in`.
+- **API auth:** every route except `/health` and the Kroger callback needs
+  `Authorization: Bearer <Supabase access token>`. `auth.ts` verifies it with the project's
+  JWKS (or the legacy HS256 secret), and checks issuer, audience `authenticated` and expiry.
+- **Data access:** the API connects to Supabase Postgres with `pg`. Each request runs in a
+  transaction as the `authenticated` role with the caller's claims set
+  (`packages/db/src/pool.ts`), so the same RLS policies apply as through Supabase's own
+  API. Only the live-recipe cache and the catalog ingest use the server's own role.
+- **First sign-in:** `ensure_household()` (security definer) creates the household, the
+  owner membership and a "Me" member. Two adults can share a household via `household_users`.
+- **Secrets:** grocer OAuth tokens are AES-256-GCM encrypted with `APP_SECRET_KEY`; the
+  Kroger OAuth `state` is HMAC-signed and expires after 10 minutes.
+- **Tests:** `scripts/test-db.sh` starts a throwaway Postgres with Supabase stand-ins
+  (`supabase/test/supabase-stubs.sql`) and all migrations; `npm run test:all` runs the RLS,
+  store and full-API tests against it.

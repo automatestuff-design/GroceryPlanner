@@ -19,5 +19,5 @@ Adding a grocer = one adapter file + one line in `registry.ts`.
 1. Apply for Instacart Developer Platform production access and a Kroger production app.
 2. Product matching: map ingredients to store products (`toStoreQuantity` handles units today;
    add a synonyms table and remember each household's picks).
-3. Store the user's linked Kroger tokens encrypted in `grocer_accounts`; sign the OAuth `state`.
+3. Done: linked Kroger tokens are stored encrypted in `grocer_accounts`, and the OAuth `state` is signed.
 4. Open partner conversations with Walmart, Amazon and Target (Shipt).

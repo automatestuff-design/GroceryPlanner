@@ -4,4 +4,5 @@ export * from "./engine/macros";
 export * from "./engine/longevity";
 export * from "./engine/planner";
 export * from "./engine/shoppingList";
+export * from "./engine/recipeQuery";
 export { SAMPLE_RECIPES } from "./data/recipes";

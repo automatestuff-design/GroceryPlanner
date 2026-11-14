@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { Recipe, RecipeProvider } from "@mealplan/core";
 import type { GrocerRegistry } from "@mealplan/grocers";
 import { quickReplies, type Card } from "./cards";
 import { SYSTEM_PROMPT } from "./prompt";
@@ -20,7 +21,9 @@ export interface ChatTurnResult {
 export interface AssistantDeps {
   client?: Anthropic;
   store: PlannerStore;
+  recipes: RecipeProvider;
   grocers: GrocerRegistry;
+  importRecipe?: (url: string) => Promise<Recipe>;
 }
 
 /**
@@ -35,7 +38,7 @@ export async function chatTurn(
   userText: string,
 ): Promise<ChatTurnResult> {
   const client = deps.client ?? new Anthropic();
-  const ctx: ToolContext = { userId, store: deps.store, grocers: deps.grocers, cards: [] };
+  const ctx: ToolContext = { userId, store: deps.store, recipes: deps.recipes, grocers: deps.grocers, importRecipe: deps.importRecipe, cards: [] };
   const messages: Anthropic.Beta.BetaMessageParam[] = [...history, { role: "user", content: userText }];
   const tools = toolDefinitions();
   let text = "";

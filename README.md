@@ -27,29 +27,52 @@ meal-planner/
 │   │                shopping list, longevity scoring. Seed recipes. (no I/O)
 │   ├── grocers/     GrocerAdapter interface, Instacart + Kroger adapters,
 │   │                partner adapters (Walmart, Amazon Fresh, Target), registry
-│   └── assistant/   Claude tool-use agent: system prompt, tools over the engine,
-│                    UI cards, quick replies, PlannerStore interface
+│   ├── recipes/     Recipe sources (Spoonacular, Edamam, schema.org JSON-LD),
+│   │                normaliser, provider that merges catalog + live APIs, ingest
+│   ├── assistant/   Claude tool-use agent: system prompt, tools over the engine,
+│   │                UI cards, quick replies, PlannerStore interface
+│   └── db/          Postgres store, recipe catalog and cache. Every query runs
+│                    as the signed-in user, so Supabase RLS applies
 ├── apps/
-│   ├── api/         Hono server: /chat plus REST routes for the tap-first screens
-│   └── app/         Expo Router app: Chat, Plan, Groceries, Longevity, Household
+│   ├── api/         Hono server: Supabase JWT auth, /chat, REST routes, ingest CLI
+│   └── app/         Expo Router app: sign-in, Chat, Plan, Groceries, Longevity, Household
 ├── supabase/migrations/   Postgres schema with row-level security
-└── docs/            ARCHITECTURE.md, GROCERS.md, LONGEVITY.md, ROADMAP.md
+├── recipes/         sources.manifest.example.json (licensed catalog imports)
+├── scripts/         throwaway Postgres for tests (test-db.sh, test-all.sh)
+└── docs/            ARCHITECTURE.md, RECIPES.md, GROCERS.md, LONGEVITY.md, ROADMAP.md
 ```
 
-## Run it
+## Run it locally (no accounts needed)
 
 ```bash
 cd meal-planner
 npm install
-cp .env.example .env        # add ANTHROPIC_API_KEY for chat; grocer keys are optional
-npm run dev:api             # http://localhost:8787
+cp .env.example .env        # optional: ANTHROPIC_API_KEY for chat, recipe/grocer keys
+npm run dev:api             # http://localhost:8787, in-memory dev backend
 npm run dev:app             # Expo: press w for web/desktop, i for iOS, a for Android
-npm test                    # engine, grocers, assistant tools, API (no network)
+npm test                    # unit tests (database tests skip)
+npm run test:all            # everything, against a throwaway local Postgres (needs Postgres binaries)
 npm run typecheck
 ```
 
-Everything except chat works without keys: the Plan, Groceries and Longevity tabs call the
-engine through REST. Grocer buttons stay disabled until their keys are set.
+With `SUPABASE_URL`/`DATABASE_URL` blank, the API runs in-memory with a dev `x-user-id`
+header, and the app skips sign-in. Dev mode refuses to start when `NODE_ENV=production`.
+
+## Connect Supabase
+
+1. Create a Supabase project. In the SQL editor, run `supabase/migrations/*.sql` in order
+   (or `supabase db push` with the Supabase CLI).
+2. **Auth → Providers → Email:** keep it on. **Auth → Email Templates → Magic Link:** include
+   `{{ .Token }}` so the email carries a 6-digit code (the app signs in with codes, which work
+   the same on iOS, Android and desktop without deep links).
+3. Fill `.env`: `SUPABASE_URL`, `DATABASE_URL` (Database → connection string; server only),
+   `APP_SECRET_KEY` (`openssl rand -base64 32`), and for the app `EXPO_PUBLIC_SUPABASE_URL`
+   and `EXPO_PUBLIC_SUPABASE_ANON_KEY`. Projects still on the legacy JWT secret also set
+   `SUPABASE_JWT_SECRET`; projects on signing keys don't need it.
+4. Load recipes: `npm run ingest -- --seed`, add Spoonacular/Edamam keys, and optionally
+   import licensed sources (see [docs/RECIPES.md](docs/RECIPES.md)).
+
+The first request from a new user creates their household (`ensure_household()`).
 
 ## Design rule
 

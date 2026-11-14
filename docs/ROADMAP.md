@@ -1,12 +1,13 @@
 # Roadmap
 
-**Now (this scaffold):** engine with tests, chat agent with tools, REST API, Expo app with
-five tabs, Instacart + Kroger adapters, Postgres schema.
+**Done:** engine, chat agent, REST API, Expo app, Instacart + Kroger adapters, Supabase
+auth (email code), Postgres store under RLS, persisted chat history, recipe sources
+(Spoonacular, Edamam, licensed JSON-LD import, add-from-link), encrypted Kroger linking.
 
 **MVP**
-1. Supabase auth + `PlannerStore` on Postgres; persist chat history.
-2. Recipe library: 150-200 curated recipes with photos, tagged for kids and Longevity.
-3. Instacart production access; Kroger account linking.
+1. Sign up for Spoonacular and/or Edamam; confirm plan tiers allow our caching and display.
+2. Licensed catalog: verify MyPlate Kitchen, add partner sources, editorial review for Longevity tags.
+3. Instacart production access; Kroger production app.
 4. Streaming chat replies; push a weekly "plan next week?" nudge.
 5. EAS builds to TestFlight / Play internal testing; deploy web as a PWA.
 

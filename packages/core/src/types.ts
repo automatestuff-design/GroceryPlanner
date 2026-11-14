@@ -90,7 +90,20 @@ export interface LongevityProfile {
   fermented: boolean;
 }
 
+/** Where a recipe came from, and what its terms let us do with it. */
+export interface RecipeSourceInfo {
+  /** Provider key, e.g. "catalog", "spoonacular", "edamam", "jsonld". */
+  provider: string;
+  /** Publisher shown to the user, e.g. "Serious Eats" or "USDA MyPlate Kitchen". */
+  name: string;
+  url?: string;
+  /** Credit line the source requires us to show. */
+  attribution?: string;
+  license?: string;
+}
+
 export interface Recipe {
+  /** Namespaced for external sources: "spoonacular:715538", "edamam:abc123". Plain for catalog recipes. */
   id: string;
   title: string;
   mealTypes: MealType[];
@@ -102,10 +115,26 @@ export interface Recipe {
   tags: string[];
   kidFriendly: boolean;
   ingredients: Ingredient[];
+  /** Empty when the source only allows linking out to its instructions (e.g. Edamam). */
   steps: string[];
   nutritionPerServing: Macros;
   longevity: LongevityProfile;
   imageUrl?: string;
+  source?: RecipeSourceInfo;
+}
+
+/** What the planner asks a recipe provider for. */
+export interface RecipeQuery {
+  mealTypes: MealType[];
+  diet: Diet;
+  excludeAllergens: Allergen[];
+  maxCookMinutes?: number;
+  /** Free text from chat, e.g. "salmon" or "sheet pan". */
+  text?: string;
+  /** Candidates wanted per meal type. */
+  limit?: number;
+  /** Stable shuffle: the same seed returns the same candidates, a new seed a fresh set. */
+  seed?: number;
 }
 
 export interface PlanRequest {

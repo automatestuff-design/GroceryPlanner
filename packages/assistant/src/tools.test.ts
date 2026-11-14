@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createGrocerRegistry, InstacartAdapter } from "@mealplan/grocers";
+import { SAMPLE_RECIPES, staticRecipeProvider } from "@mealplan/core";
 import { MemoryStore } from "./memoryStore";
 import { runTool, toolDefinitions, type ToolContext } from "./tools";
 import { quickReplies } from "./cards";
 
-const ctx = (): ToolContext => ({ userId: "u1", store: new MemoryStore(), grocers: createGrocerRegistry([new InstacartAdapter(undefined)]), cards: [] });
+const ctx = (): ToolContext => ({
+  userId: "u1", store: new MemoryStore(), recipes: staticRecipeProvider(SAMPLE_RECIPES),
+  grocers: createGrocerRegistry([new InstacartAdapter(undefined)]), cards: [],
+});
 
 describe("assistant tools", () => {
   it("exposes JSON-schema tool definitions", () => {
@@ -39,6 +43,19 @@ describe("assistant tools", () => {
   it("reports a missing plan as a tool error", async () => {
     const r = await runTool("get_longevity_report", {}, ctx());
     expect(r).toMatchObject({ isError: true });
+  });
+
+  it("leans the plan towards a focus ingredient", async () => {
+    const c = ctx();
+    const r = await runTool("create_week_plan", { strategy: "meal-type", track: "standard", focus: "salmon" }, c);
+    expect(JSON.parse(r.content).meals.map((m: { title: string }) => m.title)).toContain("Sheet-Pan Salmon & Quinoa Bowls");
+  });
+
+  it("imports a recipe through the household importer", async () => {
+    const c = ctx();
+    c.importRecipe = async () => SAMPLE_RECIPES[0]!;
+    const r = await runTool("import_recipe_from_url", { url: "https://example.org/r" }, c);
+    expect(JSON.parse(r.content).title).toBe(SAMPLE_RECIPES[0]!.title);
   });
 
   it("reports an unconfigured grocer as a tool error", async () => {

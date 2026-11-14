@@ -131,3 +131,22 @@ describe("longevity report", () => {
 
   });
 });
+
+describe("recipe provider", () => {
+  it("filters by meal type, diet and every eater's allergens", async () => {
+    const { staticRecipeProvider, queryForPlan } = await import("../index");
+    const provider = staticRecipeProvider(SAMPLE_RECIPES);
+    const q = queryForPlan({ household: family, slots: defaultSlots("family", ["breakfast"]) });
+    expect(q.excludeAllergens).toEqual(["peanut"]);
+    const hits = await provider.search(q);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.find((r) => r.id === "overnight-oats")).toBeUndefined(); // peanut butter
+    expect(hits.every((r) => r.mealTypes.includes("breakfast"))).toBe(true);
+  });
+
+  it("matches free text against title and ingredients", async () => {
+    const { staticRecipeProvider } = await import("../index");
+    const hits = await staticRecipeProvider(SAMPLE_RECIPES).search({ mealTypes: ["dinner"], diet: "omnivore", excludeAllergens: [], text: "salmon" });
+    expect(hits.map((r) => r.id)).toEqual(["salmon-quinoa-bowl"]);
+  });
+});

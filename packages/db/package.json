@@ -1,0 +1,16 @@
+{
+  "name": "@mealplan/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "test": "vitest run --dir src" },
+  "dependencies": {
+    "@mealplan/assistant": "*",
+    "@mealplan/core": "*",
+    "@mealplan/recipes": "*",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": { "@types/pg": "^8.23.1", "@types/node": "^22.20.5" }
+}

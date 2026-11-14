@@ -7,7 +7,7 @@ import type { CartResult } from "@mealplan/grocers";
  */
 export type Card =
   | { type: "household"; household: Household }
-  | { type: "plan"; plan: WeekPlan; recipes: Pick<Recipe, "id" | "title" | "timeMinutes" | "nutritionPerServing" | "imageUrl">[] }
+  | { type: "plan"; plan: WeekPlan; recipes: Pick<Recipe, "id" | "title" | "timeMinutes" | "nutritionPerServing" | "imageUrl" | "source">[] }
   | { type: "shopping-list"; list: ShoppingList }
   | { type: "longevity"; report: LongevityReport }
   | { type: "cart"; cart: CartResult; grocerName: string };

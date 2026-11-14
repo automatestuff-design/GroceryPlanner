@@ -1,0 +1,21 @@
+{
+  "_comment": "Copy to sources.manifest.json and list only sources whose terms let us STORE their recipes. Publicly visible is not the same as licensed: most recipe sites' text and photos are copyrighted. Accepted license values: public-domain, CC0, CC-BY-<ver>, CC-BY-SA-<ver>, partner-agreement:<ref>, own. Pages without schema.org NutritionInformation are skipped.",
+  "sources": [
+    {
+      "name": "USDA MyPlate Kitchen",
+      "license": "public-domain",
+      "attribution": "Recipe from USDA MyPlate Kitchen (myplate.gov)",
+      "_verify": "USDA asks for attribution, and some MyPlate recipes come from partners. Confirm each partner recipe's terms and that the pages publish nutrition markup before running a full import.",
+      "urls": ["https://www.myplate.gov/sitemap.xml"],
+      "include": "/recipes/",
+      "delayMs": 1000
+    },
+    {
+      "name": "Our test kitchen",
+      "license": "own",
+      "attribution": "Simmer test kitchen",
+      "urls": ["https://recipes.example.com/sitemap.xml"],
+      "delayMs": 250
+    }
+  ]
+}

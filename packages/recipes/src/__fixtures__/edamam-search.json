@@ -1,0 +1,9 @@
+{"from":1,"to":1,"count":1,"hits":[{"recipe":{
+ "uri":"http://www.edamam.com/ontologies/edamam.owl#recipe_b79327d05b8e5b838ad6cfd9576b30b6",
+ "label":"Chickpea Curry","image":"https://edamam-product-images.example/chickpea.jpg","source":"Example Blog","url":"https://exampleblog.com/chickpea-curry",
+ "yield":4,"totalTime":30,"dietLabels":["High-Fiber"],"healthLabels":["Vegan","Vegetarian","Peanut-Free","Dairy-Free"],
+ "mealType":["lunch/dinner"],"dishType":["main course"],"cuisineType":["indian"],
+ "ingredientLines":["2 cans chickpeas","1 can coconut milk","1 onion","2 tbsp curry powder"],
+ "ingredients":[{"text":"2 cans chickpeas","quantity":2,"measure":"can","food":"chickpeas"},{"text":"1 can coconut milk","quantity":1,"measure":"can","food":"coconut milk"},{"text":"1 onion","quantity":1,"measure":"<unit>","food":"onion"},{"text":"2 tbsp curry powder","quantity":2,"measure":"tablespoon","food":"curry powder"}],
+ "totalNutrients":{"ENERC_KCAL":{"label":"Energy","quantity":1800,"unit":"kcal"},"PROCNT":{"label":"Protein","quantity":60,"unit":"g"},"FAT":{"label":"Fat","quantity":80,"unit":"g"},"CHOCDF":{"label":"Carbs","quantity":200,"unit":"g"},"FIBTG":{"label":"Fiber","quantity":56,"unit":"g"}}
+}}]}
