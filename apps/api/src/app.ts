@@ -37,7 +37,7 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<Env>();
 
   // Auth is a bearer token, not a cookie, so CORS isn't the security boundary; still, list the app's origins in production.
-  app.use("*", cors({ origin: process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()) ?? "*", allowHeaders: ["Authorization", "Content-Type", "x-user-id"], allowMethods: ["GET", "POST", "PATCH", "DELETE"] }));
+  app.use("*", cors({ origin: corsOrigins(process.env.CORS_ORIGINS), allowHeaders: ["Authorization", "Content-Type", "x-user-id"], allowMethods: ["GET", "POST", "PATCH", "DELETE"] }));
 
   app.use("*", async (c, next) => {
     if (PUBLIC.has(c.req.path)) return next();
@@ -177,6 +177,15 @@ export function createApp(deps: AppDeps) {
   });
 
   return app;
+}
+
+/**
+ * CORS_ORIGINS from .env. A blank `CORS_ORIGINS=` line arrives as "", not undefined,
+ * and must mean "any origin" like an absent one: an empty allow-list blocks the app.
+ */
+export function corsOrigins(raw: string | undefined): string | string[] {
+  const list = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return list.length ? list : "*";
 }
 
 const Allergen = z.enum(["gluten", "dairy", "egg", "peanut", "tree-nut", "soy", "fish", "shellfish", "sesame"]);

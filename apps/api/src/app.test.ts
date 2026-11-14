@@ -17,6 +17,23 @@ describe("api (dev backend)", () => {
     expect((await createApp({ backend: devBackend({ sources: [] }) }).request("/household")).status).toBe(401);
   });
 
+  it("allows the app's origin when CORS_ORIGINS is blank, unset or listed", async () => {
+    const preflight = { method: "OPTIONS", headers: { Origin: "http://localhost:8081", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,content-type" } };
+    const allowed = async (value: string | undefined) => {
+      if (value === undefined) delete process.env.CORS_ORIGINS; else process.env.CORS_ORIGINS = value;
+      const res = await createApp({ backend: devBackend({ sources: [] }) }).request("/chat", preflight);
+      return res.headers.get("access-control-allow-origin");
+    };
+    try {
+      expect(await allowed("")).toBe("*"); // the blank line from .env.example
+      expect(await allowed(undefined)).toBe("*");
+      expect(await allowed("http://localhost:8081, https://app.example.com")).toBe("http://localhost:8081");
+      expect(await allowed("https://app.example.com")).toBeNull();
+    } finally {
+      delete process.env.CORS_ORIGINS;
+    }
+  });
+
   it("plans, swaps and lists groceries without the chat", async () => {
     const app = createApp({ backend: devBackend({ sources: [] }) });
     const created = await app.request("/plans", { method: "POST", headers: h, body: JSON.stringify({ strategy: "meal-type", track: "longevity", weekStart: "2026-11-16" }) });
