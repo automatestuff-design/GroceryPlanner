@@ -11,6 +11,7 @@
  * connection string, server-side only).
  */
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { SAMPLE_RECIPES } from "@mealplan/core";
 import { createPool, postgresCatalogWriter } from "@mealplan/db";
 import { ingestSource, type ManifestSource } from "@mealplan/recipes";
@@ -32,7 +33,9 @@ async function main() {
     }
     const manifestPath = args.find((a) => !a.startsWith("--") && a !== flag("--limit") && a !== flag("--only"));
     if (!manifestPath) throw new Error("Pass a manifest path, or --seed.");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { sources: ManifestSource[] };
+    // `npm run -w` runs in apps/api; resolve the path from where the user ran npm.
+    const manifestFile = resolve(process.env.INIT_CWD ?? process.cwd(), manifestPath);
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as { sources: ManifestSource[] };
     const only = flag("--only");
     const limit = flag("--limit") ? Number(flag("--limit")) : undefined;
 

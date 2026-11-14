@@ -60,8 +60,16 @@ header, and the app skips sign-in. Dev mode refuses to start when `NODE_ENV=prod
 
 ## Connect Supabase
 
-1. Create a Supabase project. In the SQL editor, run `supabase/migrations/*.sql` in order
-   (or `supabase db push` with the Supabase CLI).
+1. Create a Supabase project, then apply the migrations **in filename order** (oldest first).
+   Either:
+   - **Dashboard:** SQL Editor → New query → paste `supabase/migrations/20261114000000_meal_planner.sql`
+     → Run. Repeat in a new query with `20261115000000_auth_and_recipe_sources.sql`.
+   - **CLI:** `supabase login`, `supabase init` (keeps the existing `supabase/migrations/`),
+     `supabase link --project-ref <ref>`, then `supabase db push`. It records which migrations
+     ran, so later ones apply with another `db push`.
+
+   Don't run `supabase/test/supabase-stubs.sql` on a real project. It stands in for Supabase's
+   own `auth` schema in local tests only.
 2. **Auth → Providers → Email:** keep it on. **Auth → Email Templates → Magic Link:** include
    `{{ .Token }}` so the email carries a 6-digit code (the app signs in with codes, which work
    the same on iOS, Android and desktop without deep links).
