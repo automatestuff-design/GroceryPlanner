@@ -41,8 +41,12 @@ export function createApp(deps: AppDeps) {
 
   app.use("*", async (c, next) => {
     if (PUBLIC.has(c.req.path)) return next();
-    const claims = await backend.authenticate(c.req.header("authorization"), c.req.header("x-user-id"));
-    if (!claims) throw new HTTPException(401, { message: "Sign in required" });
+    const auth = await backend.authenticate(c.req.header("authorization"), c.req.header("x-user-id"));
+    if ("error" in auth) {
+      console.warn(`[auth] 401 ${c.req.method} ${c.req.path}: ${auth.error}`);
+      throw new HTTPException(401, { message: auth.error });
+    }
+    const { claims } = auth;
     c.set("claims", claims);
     c.set("svc", backend.servicesFor(claims));
     await next();

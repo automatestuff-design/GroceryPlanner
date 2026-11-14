@@ -15,7 +15,34 @@ export default function SettingsScreen() {
   const h = useAsync(api.household);
   const [link, setLink] = useState("");
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  if (!h.data) return null;
+
+  // Account first-class: it must stay reachable (with sign-out) even when the household can't load.
+  const account = (
+    <Card>
+      <Text style={{ color: c.text, fontWeight: "700" }}>Account</Text>
+      {auth.devMode ? <Muted>Development mode: sign-in is off. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in apps/app/.env to turn it on.</Muted> : (
+        <>
+          <Muted>Signed in as {auth.email}</Muted>
+          <Button label="Sign out" variant="ghost" onPress={auth.signOut} />
+        </>
+      )}
+    </Card>
+  );
+
+  if (!h.data) {
+    return (
+      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg }}>
+        {h.error && (
+          <Card style={{ borderColor: c.warn }}>
+            <Text style={{ color: c.warn, fontWeight: "700" }}>Couldn't load your household</Text>
+            <Muted>{h.error}</Muted>
+            <Button label="Try again" variant="ghost" onPress={h.reload} />
+          </Card>
+        )}
+        {account}
+      </ScrollView>
+    );
+  }
 
   async function importLink() {
     setImportMsg("Importing…");
@@ -62,15 +89,7 @@ export default function SettingsScreen() {
         <Button label="Add recipe" variant="ghost" disabled={!link.startsWith("http")} onPress={importLink} />
         {importMsg && <Muted>{importMsg}</Muted>}
       </Card>
-      <Card>
-        <Text style={{ color: c.text, fontWeight: "700" }}>Account</Text>
-        {auth.devMode ? <Muted>Development mode: sign-in is off.</Muted> : (
-          <>
-            <Muted>Signed in as {auth.email}</Muted>
-            <Button label="Sign out" variant="ghost" onPress={auth.signOut} />
-          </>
-        )}
-      </Card>
+      {account}
     </ScrollView>
   );
 }
