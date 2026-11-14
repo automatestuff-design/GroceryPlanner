@@ -64,7 +64,8 @@ header, and the app skips sign-in. Dev mode refuses to start when `NODE_ENV=prod
 1. Create a Supabase project, then apply the migrations **in filename order** (oldest first).
    Either:
    - **Dashboard:** SQL Editor → New query → paste `supabase/migrations/20261114000000_meal_planner.sql`
-     → Run. Repeat in a new query with `20261115000000_auth_and_recipe_sources.sql`.
+     → Run. Repeat, one new query per file, with `20261115000000_auth_and_recipe_sources.sql`
+     and `20261116000000_api_role_membership.sql` (lets the API act as the signed-in user).
    - **CLI:** `supabase login`, `supabase init` (keeps the existing `supabase/migrations/`),
      `supabase link --project-ref <ref>`, then `supabase db push`. It records which migrations
      ran, so later ones apply with another `db push`.
