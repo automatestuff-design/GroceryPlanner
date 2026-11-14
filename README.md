@@ -47,7 +47,8 @@ meal-planner/
 ```bash
 cd meal-planner
 npm install
-cp .env.example .env        # optional: ANTHROPIC_API_KEY for chat, recipe/grocer keys
+cp .env.example .env                    # API: optional ANTHROPIC_API_KEY, recipe/grocer keys
+cp apps/app/.env.example apps/app/.env  # app: API URL, Supabase URL + publishable key
 npm run dev:api             # http://localhost:8787, in-memory dev backend
 npm run dev:app             # Expo: press w for web/desktop, i for iOS, a for Android
 npm test                    # unit tests (database tests skip)
@@ -73,9 +74,10 @@ header, and the app skips sign-in. Dev mode refuses to start when `NODE_ENV=prod
 2. **Auth → Providers → Email:** keep it on. **Auth → Email Templates → Magic Link:** include
    `{{ .Token }}` so the email carries a 6-digit code (the app signs in with codes, which work
    the same on iOS, Android and desktop without deep links).
-3. Fill `.env`: `SUPABASE_URL`, `DATABASE_URL` (Database → connection string; server only),
-   `APP_SECRET_KEY` (`openssl rand -base64 32`), and for the app `EXPO_PUBLIC_SUPABASE_URL`
-   and `EXPO_PUBLIC_SUPABASE_ANON_KEY`. Projects still on the legacy JWT secret also set
+3. Fill the root `.env` (API, server only): `SUPABASE_URL`, `DATABASE_URL` (dashboard **Connect** →
+   Session pooler URI, with your database password), and `APP_SECRET_KEY` (`openssl rand -base64 32`).
+   Fill `apps/app/.env` (app): `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+   (the publishable key). Expo only reads `.env` from the app's folder, hence two files. Projects still on the legacy JWT secret also set
    `SUPABASE_JWT_SECRET`; projects on signing keys don't need it.
 4. Load recipes: `npm run ingest -- --seed`, add Spoonacular/Edamam keys, and optionally
    import licensed sources (see [docs/RECIPES.md](docs/RECIPES.md)).
