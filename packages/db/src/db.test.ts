@@ -1,30 +1,8 @@
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SAMPLE_RECIPES, defaultSlots, generateWeekPlan, type PlanRequest } from "@mealplan/core";
 import { createRecipeProvider } from "@mealplan/recipes";
-import {
-  createPool, decrypt, encrypt, PostgresStore, postgresCatalog, postgresCatalogWriter, postgresRecipeCache,
-  signState, verifyState, type Db,
-} from "./index";
-
-process.env.APP_SECRET_KEY ??= randomBytes(32).toString("base64");
-
-describe("secrets", () => {
-  it("round-trips tokens and rejects tampering", () => {
-    const c = encrypt("kroger-access-token");
-    expect(decrypt(c)).toBe("kroger-access-token");
-    const parts = c.split(".");
-    parts[3] = Buffer.from("tampered").toString("base64url");
-    expect(() => decrypt(parts.join("."))).toThrow();
-  });
-
-  it("verifies signed OAuth state and expires it", () => {
-    const s = signState("user-1", undefined, 1_000);
-    expect(verifyState(s, undefined, 2_000)).toBe("user-1");
-    expect(verifyState(s, undefined, 1_000 + 11 * 60_000)).toBeNull();
-    expect(verifyState(s.replace(/.$/, "x"), undefined, 2_000)).toBeNull();
-  });
-});
+import { createPool, PostgresStore, postgresCatalog, postgresCatalogWriter, postgresRecipeCache, type Db } from "./index";
 
 // Integration tests need a database with the migrations applied: eval "$(scripts/test-db.sh)"
 const url = process.env.TEST_DATABASE_URL;
@@ -101,13 +79,50 @@ describe.skipIf(!url)("Postgres store (RLS)", () => {
     await expect(new PostgresStore(pool, alice).getHousehold(bob.sub)).rejects.toThrow(/different user/);
   });
 
-  it("stores grocer tokens encrypted", async () => {
-    const store = new PostgresStore(pool, alice);
-    await store.saveGrocerToken(alice.sub, "kroger", { accessToken: "secret-token", expiresIn: 1800 });
-    expect(await store.grocerToken(alice.sub, "kroger")).toBe("secret-token");
-    const raw = await pool.query("select access_token_enc from grocer_accounts where user_id = $1", [alice.sub]);
-    expect(raw.rows[0].access_token_enc).not.toContain("secret-token");
-    expect(await new PostgresStore(pool, bob).grocerToken(bob.sub, "kroger")).toBeUndefined();
+  describe("grocery list", () => {
+    it("remembers check-offs per plan", async () => {
+      const store = new PostgresStore(pool, alice);
+      const h = await store.getHousehold(alice.sub);
+      const current = (await store.getCurrentPlan(h.id))!;
+      await store.setChecked(current.plan.id, "garlic|clove", true);
+      await store.setChecked(current.plan.id, "lemon|each", true);
+      await store.setChecked(current.plan.id, "lemon|each", true); // idempotent
+      await store.setChecked(current.plan.id, "garlic|clove", false);
+      expect(await store.getCheckedKeys(current.plan.id)).toEqual(["lemon|each"]);
+
+      // Bob can neither read nor write Alice's check-offs.
+      const bobStore = new PostgresStore(pool, bob);
+      expect(await bobStore.getCheckedKeys(current.plan.id)).toEqual([]);
+      await expect(bobStore.setChecked(current.plan.id, "eggs|each", true)).rejects.toThrow(/row-level security/);
+    });
+
+    it("adds, updates and removes the household's own items", async () => {
+      const store = new PostgresStore(pool, alice);
+      const h = await store.getHousehold(alice.sub);
+      const [towels, milk] = await store.addExtras(h.id, [{ name: " paper towels ", quantity: "2 rolls" }, { name: "milk" }]);
+      expect(towels).toMatchObject({ name: "paper towels", quantity: "2 rolls", checked: false });
+      expect(milk!.quantity).toBeUndefined();
+
+      expect(await store.updateExtra(h.id, milk!.id, { checked: true })).toMatchObject({ name: "milk", checked: true });
+      expect(await store.updateExtra(h.id, towels!.id, { quantity: null })).toMatchObject({ quantity: undefined, checked: false });
+      expect(await store.updateExtra(h.id, "not-a-uuid", { checked: true })).toBeNull();
+      expect((await store.listExtras(h.id)).map((e) => e.name)).toEqual(["paper towels", "milk"]);
+
+      expect(await store.removeExtras(h.id, [milk!.id, "junk"])).toBe(1);
+      expect((await store.listExtras(h.id)).map((e) => e.name)).toEqual(["paper towels"]);
+    });
+
+    it("keeps households' own items private", async () => {
+      const aliceStore = new PostgresStore(pool, alice);
+      const h = await aliceStore.getHousehold(alice.sub);
+      const [item] = await aliceStore.addExtras(h.id, [{ name: "secret snack" }]);
+      const bobStore = new PostgresStore(pool, bob);
+      expect(await bobStore.listExtras(h.id)).toEqual([]);
+      expect(await bobStore.updateExtra(h.id, item!.id, { checked: true })).toBeNull();
+      expect(await bobStore.removeExtras(h.id, [item!.id])).toBe(0);
+      await expect(bobStore.addExtras(h.id, [{ name: "planted" }])).rejects.toThrow(/row-level security/);
+      expect((await aliceStore.listExtras(h.id)).map((e) => e.name)).toContain("secret snack");
+    });
   });
 
   describe("recipe catalog", () => {

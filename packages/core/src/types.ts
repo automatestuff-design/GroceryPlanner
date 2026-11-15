@@ -56,8 +56,6 @@ export interface Household {
   members: Member[];
   /** Ingredients already on hand; dropped from the shopping list. */
   pantry: string[];
-  preferredGrocer?: GrocerId;
-  postalCode?: string;
 }
 
 export type Aisle =
@@ -186,4 +184,20 @@ export interface ShoppingList {
   pantryExcluded: string[];
 }
 
-export type GrocerId = "instacart" | "kroger" | "walmart" | "amazon-fresh" | "target" | "albertsons" | "costco";
+/** Something the household added by hand ("paper towels"). Kept across plans until removed. */
+export interface ExtraItem {
+  id: string;
+  name: string;
+  /** Free text, e.g. "2 rolls". */
+  quantity?: string;
+  checked: boolean;
+}
+
+/** The list as the user sees it: plan ingredients with check state, plus their own items. */
+export interface GroceryList {
+  /** Null when there's no plan yet; the list can still hold extras. */
+  planId: string | null;
+  items: (ShoppingItem & { key: string; checked: boolean })[];
+  extras: ExtraItem[];
+  pantryExcluded: string[];
+}

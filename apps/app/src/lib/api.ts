@@ -1,18 +1,16 @@
 import { accessToken } from "./supabase";
 import type {
-  Household, LongevityReport, MealType, PlanStrategy, PlanTrack, Recipe, ShoppingList, WeekPlan, Weekday,
+  GroceryList, Household, LongevityReport, MealType, PlanStrategy, PlanTrack, Recipe, WeekPlan, Weekday,
 } from "@mealplan/core";
 
 /** Mirrors packages/assistant Card; kept as a type-only import so the app never bundles server code. */
 export type Card =
   | { type: "household"; household: Household }
   | { type: "plan"; plan: WeekPlan; recipes: Pick<Recipe, "id" | "title" | "timeMinutes" | "nutritionPerServing" | "imageUrl" | "source">[] }
-  | { type: "shopping-list"; list: ShoppingList }
-  | { type: "longevity"; report: LongevityReport }
-  | { type: "cart"; cart: { checkoutUrl?: string; matched: unknown[]; unmatched: unknown[] }; grocerName: string };
+  | { type: "shopping-list"; list: GroceryList }
+  | { type: "longevity"; report: LongevityReport };
 
 export interface ChatReply { text: string; cards: Card[]; quickReplies: string[] }
-export interface GrocerInfo { id: string; name: string; status: "live" | "partner"; configured: boolean; banners?: string[] }
 
 const BASE = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8787";
 
@@ -39,13 +37,17 @@ export const api = {
     req<WeekPlan>("/plans", { method: "POST", body: JSON.stringify(body) }),
   currentPlan: () => req<{ plan: WeekPlan; recipes: Recipe[] }>("/plans/current"),
   swap: (day: Weekday, slot: MealType) => req<WeekPlan>("/plans/current/swap", { method: "POST", body: JSON.stringify({ day, slot }) }),
-  shoppingList: () => req<ShoppingList>("/plans/current/shopping-list"),
+  // Grocery list: every change returns the whole updated list.
+  groceryList: () => req<GroceryList>("/shopping-list"),
+  checkItem: (key: string, checked: boolean) => req<GroceryList>("/shopping-list/check", { method: "POST", body: JSON.stringify({ key, checked }) }),
+  addExtras: (items: { name: string; quantity?: string }[]) => req<GroceryList>("/shopping-list/extras", { method: "POST", body: JSON.stringify({ items }) }),
+  updateExtra: (id: string, patch: { checked?: boolean; name?: string; quantity?: string | null }) =>
+    req<GroceryList>(`/shopping-list/extras/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  removeExtra: (id: string) => req<GroceryList>(`/shopping-list/extras/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  clearChecked: () => req<GroceryList>("/shopping-list/clear-checked", { method: "POST" }),
   longevity: () => req<LongevityReport>("/plans/current/longevity"),
   recipe: (id: string) => req<Recipe>(`/recipes/${encodeURIComponent(id)}`),
   importRecipe: (url: string) => req<Recipe>("/recipes/import", { method: "POST", body: JSON.stringify({ url }) }),
-  linkKroger: () => req<{ url: string }>("/grocers/kroger/connect", { method: "POST" }),
-  grocers: () => req<GrocerInfo[]>("/grocers"),
-  sendToGrocer: (id: string) => req<{ checkoutUrl?: string }>(`/grocers/${id}/cart`, { method: "POST" }),
 };
 
 export function nextMonday(): string {

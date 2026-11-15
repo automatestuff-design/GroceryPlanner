@@ -1,13 +1,11 @@
 import type { PlannerStore } from "@mealplan/assistant";
-import type { Household, Member, PlanRequest, WeekPlan } from "@mealplan/core";
+import type { ExtraItem, Household, Member, PlanRequest, WeekPlan } from "@mealplan/core";
 import { asUser, type Claims, type Db, type Tx } from "./pool";
-import { decrypt, encrypt } from "./secrets";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface HouseholdRow {
   id: string; name: string; mode: Household["mode"]; diet: Household["diet"]; pantry: string[];
-  preferred_grocer: Household["preferredGrocer"] | null; postal_code: string | null;
 }
 interface MemberRow {
   id: string; name: string; age_group: Member["ageGroup"]; age: number | null; sex: Member["sex"] | null;
@@ -51,8 +49,8 @@ export class PostgresStore implements PlannerStore {
     await this.tx(async (tx) => {
       const hid = await this.ensureHousehold(tx);
       await tx.query(
-        `update households set name = $2, mode = $3, diet = $4, pantry = $5, preferred_grocer = $6, postal_code = $7 where id = $1`,
-        [hid, h.name, h.mode, h.diet, h.pantry, h.preferredGrocer ?? null, h.postalCode ?? null],
+        `update households set name = $2, mode = $3, diet = $4, pantry = $5 where id = $1`,
+        [hid, h.name, h.mode, h.diet, h.pantry],
       );
       const keep = h.members.filter((m) => UUID.test(m.id)).map((m) => m.id);
       await tx.query("delete from members where household_id = $1 and not (id = any($2::uuid[]))", [hid, keep]);
@@ -134,35 +132,87 @@ export class PostgresStore implements PlannerStore {
     });
   }
 
-  async grocerToken(userId: string, grocer: string): Promise<string | undefined> {
-    this.assertSelf(userId);
+  // ---------- grocery list ----------
+  // RLS limits every query to the caller's households; the household_id filters
+  // additionally keep a user with two households from editing the wrong list.
+
+  async getCheckedKeys(planId: string): Promise<string[]> {
     return this.tx(async (tx) => {
-      const { rows } = await tx.query<{ access_token_enc: string; expires_at: Date | null }>(
-        "select access_token_enc, expires_at from grocer_accounts where user_id = $1 and grocer = $2",
-        [userId, grocer],
-      );
-      const row = rows[0];
-      if (!row || (row.expires_at && row.expires_at.getTime() < Date.now())) return undefined;
-      return decrypt(row.access_token_enc);
+      const { rows } = await tx.query<{ item_key: string }>("select item_key from shopping_checks where plan_id = $1 and checked", [planId]);
+      return rows.map((r) => r.item_key);
     });
   }
 
-  async saveGrocerToken(userId: string, grocer: string, t: { accessToken: string; refreshToken?: string; expiresIn: number }): Promise<void> {
-    this.assertSelf(userId);
-    await this.tx((tx) =>
-      tx.query(
-        `insert into grocer_accounts (user_id, grocer, access_token_enc, refresh_token_enc, expires_at)
-         values ($1, $2, $3, $4, now() + make_interval(secs => $5))
-         on conflict (user_id, grocer) do update set access_token_enc = excluded.access_token_enc,
-           refresh_token_enc = excluded.refresh_token_enc, expires_at = excluded.expires_at`,
-        [userId, grocer, encrypt(t.accessToken), t.refreshToken ? encrypt(t.refreshToken) : null, t.expiresIn],
-      ),
-    );
+  async setChecked(planId: string, key: string, checked: boolean): Promise<void> {
+    await this.tx(async (tx) => {
+      if (checked) {
+        await tx.query(
+          `insert into shopping_checks (plan_id, item_key, checked) values ($1, $2, true)
+           on conflict (plan_id, item_key) do update set checked = true`,
+          [planId, key],
+        );
+      } else {
+        await tx.query("delete from shopping_checks where plan_id = $1 and item_key = $2", [planId, key]);
+      }
+    });
+  }
+
+  async listExtras(householdId: string): Promise<ExtraItem[]> {
+    return this.tx(async (tx) => {
+      const { rows } = await tx.query<ExtraRow>(
+        "select id, name, quantity, checked from shopping_extras where household_id = $1 order by created_at, id",
+        [householdId],
+      );
+      return rows.map(toExtra);
+    });
+  }
+
+  async addExtras(householdId: string, items: { name: string; quantity?: string }[]): Promise<ExtraItem[]> {
+    if (!items.length) return [];
+    return this.tx(async (tx) => {
+      const added: ExtraItem[] = [];
+      for (const i of items) {
+        const { rows } = await tx.query<ExtraRow>(
+          "insert into shopping_extras (household_id, name, quantity) values ($1, $2, $3) returning id, name, quantity, checked",
+          [householdId, i.name.trim(), i.quantity?.trim() || null],
+        );
+        added.push(toExtra(rows[0]!));
+      }
+      return added;
+    });
+  }
+
+  async updateExtra(householdId: string, id: string, patch: { checked?: boolean; name?: string; quantity?: string | null }): Promise<ExtraItem | null> {
+    if (!UUID.test(id)) return null;
+    return this.tx(async (tx) => {
+      const { rows } = await tx.query<ExtraRow>(
+        `update shopping_extras set
+           checked = coalesce($3, checked),
+           name = coalesce($4, name),
+           quantity = case when $5 then $6 else quantity end
+         where household_id = $1 and id = $2
+         returning id, name, quantity, checked`,
+        [householdId, id, patch.checked ?? null, patch.name?.trim() ?? null, patch.quantity !== undefined, patch.quantity?.trim() || null],
+      );
+      return rows[0] ? toExtra(rows[0]) : null;
+    });
+  }
+
+  async removeExtras(householdId: string, ids: string[]): Promise<number> {
+    const valid = ids.filter((id) => UUID.test(id));
+    if (!valid.length) return 0;
+    return this.tx(async (tx) => {
+      const res = await tx.query("delete from shopping_extras where household_id = $1 and id = any($2::uuid[])", [householdId, valid]);
+      return res.rowCount ?? 0;
+    });
   }
 }
 
+interface ExtraRow { id: string; name: string; quantity: string | null; checked: boolean }
+const toExtra = (r: ExtraRow): ExtraItem => ({ id: r.id, name: r.name, quantity: r.quantity ?? undefined, checked: r.checked });
+
 async function loadHousehold(tx: Tx, hid: string): Promise<Household> {
-  const { rows } = await tx.query<HouseholdRow>("select id, name, mode, diet, pantry, preferred_grocer, postal_code from households where id = $1", [hid]);
+  const { rows } = await tx.query<HouseholdRow>("select id, name, mode, diet, pantry from households where id = $1", [hid]);
   const h = rows[0];
   if (!h) throw new Error("Household not found");
   const members = await tx.query<MemberRow>(
@@ -176,8 +226,6 @@ async function loadHousehold(tx: Tx, hid: string): Promise<Household> {
     mode: h.mode,
     diet: h.diet,
     pantry: h.pantry,
-    preferredGrocer: h.preferred_grocer ?? undefined,
-    postalCode: h.postal_code ?? undefined,
     members: members.rows.map((m) => ({
       id: m.id,
       name: m.name,

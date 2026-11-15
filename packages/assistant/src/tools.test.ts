@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createGrocerRegistry, InstacartAdapter } from "@mealplan/grocers";
 import { SAMPLE_RECIPES, staticRecipeProvider } from "@mealplan/core";
 import { MemoryStore } from "./memoryStore";
 import { runTool, toolDefinitions, type ToolContext } from "./tools";
 import { quickReplies } from "./cards";
 
 const ctx = (): ToolContext => ({
-  userId: "u1", store: new MemoryStore(), recipes: staticRecipeProvider(SAMPLE_RECIPES),
-  grocers: createGrocerRegistry([new InstacartAdapter(undefined)]), cards: [],
+  userId: "u1", store: new MemoryStore(), recipes: staticRecipeProvider(SAMPLE_RECIPES), cards: [],
 });
 
 describe("assistant tools", () => {
@@ -30,9 +28,9 @@ describe("assistant tools", () => {
     expect(JSON.parse(plan.content).meals).toHaveLength(7);
 
     const list = await runTool("get_shopping_list", {}, c);
-    expect(JSON.parse(list.content).itemCount).toBeGreaterThan(5);
+    expect(JSON.parse(list.content).toBuy.length).toBeGreaterThan(5);
     expect(c.cards.map((x) => x.type)).toEqual(["household", "plan", "shopping-list"]);
-    expect(quickReplies(c.cards)).toContain("Order with Instacart");
+    expect(quickReplies(c.cards)).toContain("Add paper towels");
   });
 
   it("rejects invalid input instead of guessing", async () => {
@@ -58,11 +56,42 @@ describe("assistant tools", () => {
     expect(JSON.parse(r.content).title).toBe(SAMPLE_RECIPES[0]!.title);
   });
 
-  it("reports an unconfigured grocer as a tool error", async () => {
+  it("has no grocer-ordering tools", () => {
+    const names = toolDefinitions().map((d) => d.name);
+    expect(names).not.toContain("send_to_grocer");
+    expect(names).not.toContain("list_grocers");
+  });
+
+  it("keeps a list of the user's own items without a plan", async () => {
     const c = ctx();
-    await runTool("create_week_plan", { strategy: "meal-type", track: "longevity" }, c);
-    const r = await runTool("send_to_grocer", { grocer: "instacart" }, c);
-    expect(r.isError).toBe(true);
-    expect(r.content).toMatch(/not configured/);
+    const r = await runTool("add_to_shopping_list", { items: [{ name: "paper towels", quantity: "2 rolls" }, { name: "coffee" }] }, c);
+    expect(JSON.parse(r.content).added).toEqual(["paper towels", "coffee"]);
+    const list = JSON.parse((await runTool("get_shopping_list", {}, c)).content);
+    expect(list.hasPlan).toBe(false);
+    expect(list.ownItems.map((i: { name: string }) => i.name)).toEqual(["paper towels", "coffee"]);
+  });
+
+  it("checks off plan ingredients and removes own items by name", async () => {
+    const c = ctx();
+    await runTool("create_week_plan", { strategy: "meal-type", track: "standard", mealTypes: ["dinner"], focus: "salmon" }, c);
+    await runTool("add_to_shopping_list", { items: [{ name: "Paper Towels" }] }, c);
+    const before = JSON.parse((await runTool("get_shopping_list", {}, c)).content);
+    expect(before.toBuy.some((t: string) => t.startsWith("broccoli"))).toBe(true);
+
+    const r = JSON.parse((await runTool("update_shopping_list", { checkOff: ["the broccoli"], remove: ["paper towels", "broccoli", "unicorn"] }, c)).content);
+    expect(r.list.checkedOff).toContain("broccoli");
+    expect(r.list.toBuy.some((t: string) => t.startsWith("broccoli"))).toBe(false);
+    expect(r.list.ownItems).toEqual([]);
+    expect(r.cantRemoveBecauseFromPlan).toEqual(["broccoli"]);
+    expect(r.notFound).toEqual(["unicorn"]);
+
+    // Check-offs survive reloading the list, and can be undone.
+    const again = JSON.parse((await runTool("update_shopping_list", { uncheck: ["broccoli"] }, c)).content);
+    expect(again.list.checkedOff).not.toContain("broccoli");
+    expect(c.cards.at(-1)?.type).toBe("shopping-list");
+  });
+
+  it("rejects an empty add", async () => {
+    expect((await runTool("add_to_shopping_list", { items: [] }, ctx())).isError).toBe(true);
   });
 });

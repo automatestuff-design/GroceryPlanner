@@ -2,7 +2,7 @@
   "name": "meal-planner",
   "version": "0.1.0",
   "private": true,
-  "description": "Chat-first meal planning for singles and families, with grocery ordering and a Longevity track.",
+  "description": "Chat-first meal planning for singles and families: recipes, a shared grocery list, and a Longevity track.",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -11,7 +11,7 @@
     "dev:api": "npm run dev -w @mealplan/api",
     "dev:app": "npm run start -w @mealplan/app",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "tsc -b packages/core packages/grocers packages/recipes packages/assistant packages/db apps/api && npm run typecheck -w @mealplan/app",
+    "typecheck": "tsc -b packages/core packages/recipes packages/assistant packages/db apps/api && npm run typecheck -w @mealplan/app",
     "test:all": "scripts/test-all.sh",
     "ingest": "npm run ingest -w @mealplan/api --"
   },

@@ -1,4 +1,4 @@
-import type { Household, PlanRequest, WeekPlan } from "@mealplan/core";
+import type { ExtraItem, Household, PlanRequest, WeekPlan } from "@mealplan/core";
 
 /**
  * Persistence the assistant needs. Implementations: MemoryStore (dev/tests) and
@@ -13,7 +13,16 @@ export interface PlannerStore {
   /** Messages API content blocks, append-only. */
   getConversation(userId: string, key: string): Promise<unknown[]>;
   saveConversation(userId: string, key: string, messages: unknown[]): Promise<void>;
-  /** OAuth token for a linked grocer account, if the user linked one. */
-  grocerToken(userId: string, grocer: string): Promise<string | undefined>;
-  saveGrocerToken(userId: string, grocer: string, token: { accessToken: string; refreshToken?: string; expiresIn: number }): Promise<void>;
+
+  // ---------- grocery list ----------
+  /** Keys (see itemKey) of the plan's ingredients the household has checked off. */
+  getCheckedKeys(planId: string): Promise<string[]>;
+  setChecked(planId: string, key: string, checked: boolean): Promise<void>;
+  /** The household's own items, oldest first. */
+  listExtras(householdId: string): Promise<ExtraItem[]>;
+  addExtras(householdId: string, items: { name: string; quantity?: string }[]): Promise<ExtraItem[]>;
+  /** Returns null when the item doesn't exist or belongs to another household. */
+  updateExtra(householdId: string, id: string, patch: { checked?: boolean; name?: string; quantity?: string | null }): Promise<ExtraItem | null>;
+  /** Removes the given items; returns how many were removed. */
+  removeExtras(householdId: string, ids: string[]): Promise<number>;
 }

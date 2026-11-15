@@ -15,7 +15,6 @@
     "@mealplan/assistant": "*",
     "@mealplan/core": "*",
     "@mealplan/db": "*",
-    "@mealplan/grocers": "*",
     "@mealplan/recipes": "*",
     "hono": "^4.13.18",
     "jose": "^6.2.17",

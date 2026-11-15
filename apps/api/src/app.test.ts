@@ -1,12 +1,10 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SignJWT } from "jose";
 import { SAMPLE_RECIPES } from "@mealplan/core";
 import { createPool, postgresCatalogWriter, type Db } from "@mealplan/db";
 import { createApp } from "./app";
 import { devBackend, supabaseBackend } from "./backend";
-
-process.env.APP_SECRET_KEY ??= randomBytes(32).toString("base64");
 
 const json = { "content-type": "application/json" };
 
@@ -39,7 +37,7 @@ describe("api (dev backend)", () => {
     const created = await app.request("/plans", { method: "POST", headers: h, body: JSON.stringify({ strategy: "meal-type", track: "longevity", weekStart: "2026-11-16" }) });
     expect(created.status).toBe(201);
     expect((await app.request("/plans/current/swap", { method: "POST", headers: h, body: JSON.stringify({ day: "mon", slot: "dinner" }) })).status).toBe(200);
-    const list = await (await app.request("/plans/current/shopping-list", { headers: h })).json();
+    const list = await (await app.request("/shopping-list", { headers: h })).json();
     expect(list.items.length).toBeGreaterThan(0);
     const current = await (await app.request("/plans/current", { headers: h })).json();
     expect(current.recipes.length).toBe(new Set(current.plan.meals.map((m: { recipeId: string }) => m.recipeId)).size);
@@ -64,13 +62,59 @@ describe("api (dev backend)", () => {
     expect(res.status).toBe(422);
   });
 
-  it("issues a signed Kroger link and rejects forged callbacks", async () => {
-    process.env.KROGER_CLIENT_ID = "cid"; process.env.KROGER_CLIENT_SECRET = "secret"; process.env.KROGER_REDIRECT_URI = "http://localhost/cb";
-    const { createGrocerRegistry, KrogerAdapter } = await import("@mealplan/grocers");
-    const app = createApp({ backend: devBackend({ sources: [] }), grocers: createGrocerRegistry([new KrogerAdapter()]) });
-    const { url } = await (await app.request("/grocers/kroger/connect", { method: "POST", headers: h })).json();
-    expect(new URL(url).searchParams.get("state")).toMatch(/^[\w-]+\.[\w-]+$/);
-    expect((await app.request("/grocers/kroger/callback?code=x&state=forged.sig")).status).toBe(400);
+  it("has no grocer routes", async () => {
+    const app = createApp({ backend: devBackend({ sources: [] }) });
+    expect((await app.request("/grocers", { headers: h })).status).toBe(404);
+  });
+
+  describe("grocery list", () => {
+    type List = { planId: string | null; items: { key: string; name: string; checked: boolean }[]; extras: { id: string; name: string; quantity?: string; checked: boolean }[] };
+    const call = async (app: ReturnType<typeof createApp>, path: string, method = "GET", body?: unknown) => {
+      const res = await app.request(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+      return { status: res.status, list: (await res.json()) as List };
+    };
+
+    it("holds your own items before there's a plan", async () => {
+      const app = createApp({ backend: devBackend({ sources: [] }) });
+      const { status, list } = await call(app, "/shopping-list/extras", "POST", { items: [{ name: " paper towels ", quantity: "2 rolls" }] });
+      expect(status).toBe(201);
+      expect(list.planId).toBeNull();
+      expect(list.extras).toMatchObject([{ name: "paper towels", quantity: "2 rolls", checked: false }]);
+      expect((await call(app, "/shopping-list/check", "POST", { key: "garlic|clove", checked: true })).status).toBe(409);
+    });
+
+    it("saves check-offs, keeps own items across a new plan, and clears checked ones", async () => {
+      const app = createApp({ backend: devBackend({ sources: [] }) });
+      await call(app, "/plans", "POST", { strategy: "meal-type", track: "standard", weekStart: "2026-11-16" });
+      const { list } = await call(app, "/shopping-list");
+      const first = list.items[0]!;
+      const checked = await call(app, "/shopping-list/check", "POST", { key: first.key, checked: true });
+      expect(checked.list.items.find((i) => i.key === first.key)?.checked).toBe(true);
+      expect((await call(app, "/shopping-list")).list.items.find((i) => i.key === first.key)?.checked).toBe(true);
+
+      const added = (await call(app, "/shopping-list/extras", "POST", { items: [{ name: "coffee" }, { name: "milk" }] })).list.extras;
+      const coffee = added.find((e) => e.name === "coffee")!;
+      expect((await call(app, `/shopping-list/extras/${coffee.id}`, "PATCH", { checked: true })).list.extras.find((e) => e.id === coffee.id)?.checked).toBe(true);
+
+      // A new plan resets plan check-offs but keeps the household's own items.
+      await call(app, "/plans", "POST", { strategy: "meal-type", track: "standard", weekStart: "2026-11-23" });
+      const fresh = (await call(app, "/shopping-list")).list;
+      expect(fresh.items.every((i) => !i.checked)).toBe(true);
+      expect(fresh.extras.map((e) => e.name)).toEqual(["coffee", "milk"]);
+
+      const cleared = (await call(app, "/shopping-list/clear-checked", "POST")).list;
+      expect(cleared.extras.map((e) => e.name)).toEqual(["milk"]);
+      const milk = cleared.extras[0]!;
+      expect((await call(app, `/shopping-list/extras/${milk.id}`, "DELETE")).list.extras).toEqual([]);
+      expect((await call(app, `/shopping-list/extras/${milk.id}`, "DELETE")).status).toBe(404);
+    });
+
+    it("validates list requests", async () => {
+      const app = createApp({ backend: devBackend({ sources: [] }) });
+      expect((await call(app, "/shopping-list/extras", "POST", { items: [] })).status).toBe(400);
+      expect((await call(app, "/shopping-list/extras", "POST", { items: [{ name: "   " }] })).status).toBe(400);
+      expect((await call(app, "/shopping-list/check", "POST", { key: "x" })).status).toBe(400);
+    });
   });
 });
 

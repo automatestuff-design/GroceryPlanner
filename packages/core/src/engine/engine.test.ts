@@ -150,3 +150,44 @@ describe("recipe provider", () => {
     expect(hits.map((r) => r.id)).toEqual(["salmon-quinoa-bowl"]);
   });
 });
+
+describe("grocery list", () => {
+  it("merges check-offs and extras, and shares as aisle-grouped text", async () => {
+    const { toGroceryList, groceryListText, itemKey } = await import("../index");
+    const plan = generateWeekPlan(req(solo, { slots: { mon: ["dinner"] } }), SAMPLE_RECIPES);
+    const list = buildShoppingList(plan, recipes);
+    const first = list.items[0]!;
+    const g = toGroceryList(list, [itemKey(first)], [
+      { id: "e1", name: "paper towels", quantity: "2 rolls", checked: false },
+      { id: "e2", name: "coffee", checked: true },
+    ]);
+    expect(g.items.find((i) => i.key === itemKey(first))?.checked).toBe(true);
+    expect(g.items.filter((i) => i.checked)).toHaveLength(1);
+
+    const text = groceryListText(g, { title: "This week" });
+    expect(text.startsWith("This week")).toBe(true);
+    expect(text).not.toContain(`- ${first.name} (`); // checked items are left out
+    expect(text).toContain("- paper towels (2 rolls)");
+    expect(text).not.toContain("coffee");
+    expect(groceryListText(g, { includeChecked: true })).toContain("coffee");
+  });
+
+  it("works with no plan, holding only the household's own items", async () => {
+    const { toGroceryList, groceryListText } = await import("../index");
+    const g = toGroceryList(null, [], [{ id: "e1", name: "milk", checked: false }]);
+    expect(g.planId).toBeNull();
+    expect(g.items).toEqual([]);
+    expect(groceryListText(g)).toBe("Grocery list\n\nAlso\n- milk");
+    expect(groceryListText(toGroceryList(null, [], []))).toContain("Nothing left to buy.");
+  });
+});
+
+describe("shoppable quantities", () => {
+  it("rounds counted items up to whole ones", () => {
+    const plan = generateWeekPlan(req(solo, { slots: { mon: ["dinner"], tue: ["dinner"], wed: ["dinner"] } }), SAMPLE_RECIPES);
+    const list = buildShoppingList(plan, recipes);
+    const counted = list.items.filter((i) => ["each", "clove", "can", "bunch"].includes(i.unit));
+    expect(counted.length).toBeGreaterThan(0);
+    for (const i of counted) expect(Number.isInteger(i.quantity) && i.quantity >= 1).toBe(true);
+  });
+});

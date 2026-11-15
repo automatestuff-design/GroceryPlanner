@@ -4,3 +4,4 @@ export { quickReplies, type Card } from "./cards";
 export type { PlannerStore } from "./store";
 export { SYSTEM_PROMPT } from "./prompt";
 export { MemoryStore } from "./memoryStore";
+export { loadGroceryList, findByName } from "./groceryList";

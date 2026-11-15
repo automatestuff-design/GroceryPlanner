@@ -3,28 +3,24 @@ import { z } from "zod";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type Anthropic from "@anthropic-ai/sdk";
-import { chatTurn } from "@mealplan/assistant";
+import { chatTurn, loadGroceryList } from "@mealplan/assistant";
 import {
-  buildShoppingList, defaultSlots, generateWeekPlan, queryForPlan, swapMeal, weeklyLongevityReport,
-  type GrocerId, type Household, type MealType, type PlanRequest, type PlanStrategy, type PlanTrack, type Weekday,
+  defaultSlots, generateWeekPlan, queryForPlan, swapMeal, weeklyLongevityReport,
+  type Household, type MealType, type PlanRequest, type PlanStrategy, type PlanTrack, type Weekday,
 } from "@mealplan/core";
-import { signState, verifyState, type Claims } from "@mealplan/db";
-import { createGrocerRegistry, KrogerAdapter, type GrocerRegistry } from "@mealplan/grocers";
+import type { Claims } from "@mealplan/db";
 import { JsonLdError } from "@mealplan/recipes";
 import type { Backend, RequestServices } from "./backend";
 
 export interface AppDeps {
   backend: Backend;
-  grocers?: GrocerRegistry;
   anthropic?: Anthropic;
-  /** Where the Kroger OAuth callback sends the browser afterwards. */
-  appUrl?: string;
 }
 
 type Env = { Variables: { claims: Claims; svc: RequestServices } };
 
 /** Routes reachable without a signed-in user. */
-const PUBLIC = new Set(["/health", "/grocers/kroger/callback"]);
+const PUBLIC = new Set(["/health"]);
 
 /**
  * REST + chat API shared by the iOS, Android and desktop/web clients.
@@ -33,7 +29,6 @@ const PUBLIC = new Set(["/health", "/grocers/kroger/callback"]);
  */
 export function createApp(deps: AppDeps) {
   const { backend } = deps;
-  const grocers = deps.grocers ?? createGrocerRegistry();
   const app = new Hono<Env>();
 
   // Auth is a bearer token, not a cookie, so CORS isn't the security boundary; still, list the app's origins in production.
@@ -63,7 +58,7 @@ export function createApp(deps: AppDeps) {
     const svc = c.get("svc");
     const history = (await svc.store.getConversation(sub, conversationId)) as Anthropic.Beta.BetaMessageParam[];
     const result = await chatTurn(
-      { store: svc.store, recipes: svc.recipes, grocers, client: deps.anthropic, importRecipe: svc.importRecipe },
+      { store: svc.store, recipes: svc.recipes, client: deps.anthropic, importRecipe: svc.importRecipe },
       sub, history, text,
     );
     await svc.store.saveConversation(sub, conversationId, result.messages);
@@ -120,10 +115,6 @@ export function createApp(deps: AppDeps) {
     await svc.store.savePlan(next, request);
     return c.json(next);
   });
-  app.get("/plans/current/shopping-list", async (c) => {
-    const { plan, byId, household } = await current(c.get("svc"), c.get("claims").sub);
-    return c.json(buildShoppingList(plan, byId, household.pantry));
-  });
   app.get("/plans/current/longevity", async (c) => {
     const { plan, byId } = await current(c.get("svc"), c.get("claims").sub);
     return c.json(weeklyLongevityReport(plan.meals, byId));
@@ -145,33 +136,55 @@ export function createApp(deps: AppDeps) {
     }
   });
 
-  // ---------- grocers ----------
-  app.get("/grocers", (c) => c.json(grocers.list()));
-  app.post("/grocers/:id/cart", async (c) => {
-    const adapter = grocers.get(c.req.param("id") as GrocerId);
-    if (!adapter) throw new HTTPException(404, { message: "Unknown grocer" });
+  // ---------- grocery list ----------
+  // The list is the current plan's ingredients plus the household's own items.
+  // Check-offs and own items are saved, so the list is the same on every device.
+  const groceryList = async (svc: RequestServices, userId: string) => {
+    const household = await svc.store.getHousehold(userId);
+    return { household, list: await loadGroceryList(svc.store, svc.recipes, household) };
+  };
+
+  app.get("/shopping-list", async (c) => c.json((await groceryList(c.get("svc"), c.get("claims").sub)).list));
+
+  app.post("/shopping-list/check", async (c) => {
+    const body = parse(CheckBody, await c.req.json());
     const svc = c.get("svc");
-    const { plan, byId, household } = await current(svc, c.get("claims").sub);
-    const list = buildShoppingList(plan, byId, household.pantry);
-    const token = await svc.store.grocerToken(c.get("claims").sub, adapter.info().id);
-    return c.json(await adapter.createCart(list, { postalCode: household.postalCode, userAccessToken: token }));
+    const { household } = await groceryList(svc, c.get("claims").sub);
+    const current = await svc.store.getCurrentPlan(household.id);
+    if (!current) throw new HTTPException(409, { message: "There's no plan yet, so there's nothing to check off." });
+    await svc.store.setChecked(current.plan.id, body.key, body.checked);
+    return c.json((await groceryList(svc, c.get("claims").sub)).list);
   });
 
-  // Kroger account linking. The app asks for the URL (authenticated), then opens it in a browser.
-  app.post("/grocers/kroger/connect", (c) => {
-    const kroger = grocers.get("kroger") as KrogerAdapter | undefined;
-    if (!kroger?.info().configured) throw new HTTPException(503, { message: "Kroger isn't configured" });
-    return c.json({ url: kroger.authorizeUrl(signState(c.get("claims").sub)) });
+  app.post("/shopping-list/extras", async (c) => {
+    const body = parse(AddExtrasBody, await c.req.json());
+    const svc = c.get("svc");
+    const household = await svc.store.getHousehold(c.get("claims").sub);
+    await svc.store.addExtras(household.id, body.items);
+    return c.json((await groceryList(svc, c.get("claims").sub)).list, 201);
   });
-  app.get("/grocers/kroger/callback", async (c) => {
-    const userId = verifyState(c.req.query("state") ?? "");
-    const code = c.req.query("code");
-    if (!userId || !code) throw new HTTPException(400, { message: "This link has expired. Start linking again from the app." });
-    const kroger = grocers.get("kroger") as KrogerAdapter;
-    const tokens = await kroger.exchangeCode(code);
-    // The signed state proves who started this flow, so act as that user.
-    await backend.servicesFor({ sub: userId }).store.saveGrocerToken(userId, "kroger", tokens);
-    return deps.appUrl ? c.redirect(`${deps.appUrl}/groceries?linked=kroger`) : c.html("<p>Kroger linked. You can close this window and return to the app.</p>");
+
+  app.patch("/shopping-list/extras/:id", async (c) => {
+    const body = parse(UpdateExtraBody, await c.req.json());
+    const svc = c.get("svc");
+    const household = await svc.store.getHousehold(c.get("claims").sub);
+    if (!(await svc.store.updateExtra(household.id, c.req.param("id"), body))) throw new HTTPException(404, { message: "Item not found" });
+    return c.json((await groceryList(svc, c.get("claims").sub)).list);
+  });
+
+  app.delete("/shopping-list/extras/:id", async (c) => {
+    const svc = c.get("svc");
+    const household = await svc.store.getHousehold(c.get("claims").sub);
+    if (!(await svc.store.removeExtras(household.id, [c.req.param("id")]))) throw new HTTPException(404, { message: "Item not found" });
+    return c.json((await groceryList(svc, c.get("claims").sub)).list);
+  });
+
+  /** After a shopping trip: drop the household's own items that are checked off. */
+  app.post("/shopping-list/clear-checked", async (c) => {
+    const svc = c.get("svc");
+    const { household, list } = await groceryList(svc, c.get("claims").sub);
+    await svc.store.removeExtras(household.id, list.extras.filter((e) => e.checked).map((e) => e.id));
+    return c.json((await groceryList(svc, c.get("claims").sub)).list);
   });
 
   app.onError((err, c) => {
@@ -194,13 +207,27 @@ export function corsOrigins(raw: string | undefined): string | string[] {
 
 const Allergen = z.enum(["gluten", "dairy", "egg", "peanut", "tree-nut", "soy", "fish", "shellfish", "sesame"]);
 /** What a client may change directly. Unknown fields (id, anything else) are dropped. */
+const CheckBody = z.object({ key: z.string().min(1).max(200), checked: z.boolean() });
+const ExtraInput = z.object({ name: z.string().trim().min(1).max(80), quantity: z.string().trim().max(40).optional() });
+const AddExtrasBody = z.object({ items: z.array(ExtraInput).min(1).max(50) });
+const UpdateExtraBody = z.object({
+  checked: z.boolean().optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  quantity: z.string().trim().max(40).nullable().optional(),
+});
+
+/** Validate a request body or answer 400 with what's wrong. */
+function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {
+  const r = schema.safeParse(body);
+  if (!r.success) throw new HTTPException(400, { message: z.prettifyError(r.error) });
+  return r.data;
+}
+
 const HouseholdPatch = z.object({
   name: z.string().min(1).max(80),
   mode: z.enum(["personal", "family"]),
   diet: z.enum(["omnivore", "pescatarian", "vegetarian", "vegan", "keto", "paleo", "mediterranean"]),
   pantry: z.array(z.string().max(80)).max(200),
-  preferredGrocer: z.enum(["instacart", "kroger", "walmart", "amazon-fresh", "target", "albertsons", "costco"]),
-  postalCode: z.string().max(12),
   members: z.array(z.object({
     id: z.string().max(64),
     name: z.string().min(1).max(60),

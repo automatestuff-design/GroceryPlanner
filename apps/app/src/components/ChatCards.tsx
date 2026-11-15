@@ -1,5 +1,4 @@
 import { Link } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
 import { Pressable, Text, View } from "react-native";
 import { WEEKDAYS } from "@mealplan/core";
 import type { Card as CardData } from "@/lib/api";
@@ -13,7 +12,6 @@ export function ChatCard({ card }: { card: CardData }) {
     case "plan": return <PlanCard card={card} />;
     case "shopping-list": return <ListCard card={card} />;
     case "longevity": return <LongevityCard card={card} />;
-    case "cart": return <CartCard card={card} />;
     case "household": return <HouseholdCard card={card} />;
   }
 }
@@ -53,21 +51,36 @@ function PlanCard({ card }: { card: Extract<CardData, { type: "plan" }> }) {
   );
 }
 
+/** Compact read-only view in chat; the Groceries tab is where you tick things off. */
 function ListCard({ card }: { card: Extract<CardData, { type: "shopping-list" }> }) {
   const c = useTheme();
-  const aisles = [...new Set(card.list.items.map((i) => i.aisle))];
+  const toBuy = card.list.items.filter((i) => !i.checked);
+  const ownToBuy = card.list.extras.filter((e) => !e.checked);
+  const done = card.list.items.length + card.list.extras.length - toBuy.length - ownToBuy.length;
+  const aisles = [...new Set(toBuy.map((i) => i.aisle))];
   return (
     <Card>
-      <Text style={{ color: c.text, fontWeight: "700" }}>{card.list.items.length} items</Text>
+      <Text style={{ color: c.text, fontWeight: "700" }}>
+        {toBuy.length + ownToBuy.length} to buy{done ? ` · ${done} done` : ""}
+      </Text>
       {aisles.map((a) => (
         <View key={a}>
           <Muted>{AISLE_LABEL[a] ?? a}</Muted>
           <Text style={{ color: c.text }}>
-            {card.list.items.filter((i) => i.aisle === a).map((i) => `${i.name} (${qty(i.quantity, i.unit)})`).join(" · ")}
+            {toBuy.filter((i) => i.aisle === a).map((i) => `${i.name} (${qty(i.quantity, i.unit)})`).join(" · ")}
           </Text>
         </View>
       ))}
+      {ownToBuy.length > 0 && (
+        <View>
+          <Muted>Your items</Muted>
+          <Text style={{ color: c.text }}>{ownToBuy.map((e) => (e.quantity ? `${e.name} (${e.quantity})` : e.name)).join(" · ")}</Text>
+        </View>
+      )}
       {card.list.pantryExcluded.length > 0 && <Muted>Skipped (in your pantry): {card.list.pantryExcluded.join(", ")}</Muted>}
+      <Link href="/groceries" asChild>
+        <Pressable><Text style={{ color: c.accent, fontWeight: "600" }}>Open grocery list →</Text></Pressable>
+      </Link>
     </Card>
   );
 }
@@ -83,15 +96,6 @@ function LongevityCard({ card }: { card: Extract<CardData, { type: "longevity" }
           <ProgressBar value={g.target ? g.actual / g.target : 0} color={c.longevity} />
         </View>
       ))}
-    </Card>
-  );
-}
-
-function CartCard({ card }: { card: Extract<CardData, { type: "cart" }> }) {
-  return (
-    <Card>
-      <Muted>{card.cart.matched.length} items sent to {card.grocerName}. You review and pay on their site.</Muted>
-      {card.cart.checkoutUrl && <Button label={`Open ${card.grocerName}`} onPress={() => WebBrowser.openBrowserAsync(card.cart.checkoutUrl!)} />}
     </Card>
   );
 }

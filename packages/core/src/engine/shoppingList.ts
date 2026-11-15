@@ -1,4 +1,4 @@
-import type { Aisle, Recipe, ShoppingItem, ShoppingList, Unit, WeekPlan } from "../types";
+import type { Aisle, ExtraItem, GroceryList, Recipe, ShoppingItem, ShoppingList, Unit, WeekPlan } from "../types";
 
 /** Units that convert to a common base so "200 g + 0.5 kg" becomes one line. */
 const TO_BASE: Partial<Record<Unit, { base: Unit; factor: number }>> = {
@@ -62,7 +62,59 @@ export function withLeftoverServings(plan: WeekPlan): WeekPlan {
   };
 }
 
+/** Things sold whole: you can't buy half an avocado or a quarter bunch of cilantro. */
+const COUNTED: Unit[] = ["each", "clove", "can", "bunch"];
+
 function roundForShopping(q: number, unit: Unit): number {
   if (unit === "g" || unit === "ml") return Math.ceil(q / 5) * 5;
+  if (COUNTED.includes(unit)) return Math.max(1, Math.ceil(q - 1e-9));
   return Math.ceil(q * 4) / 4;
+}
+
+/** Stable id for a generated item, used to remember check-offs. Same name+unit merge into one line. */
+export function itemKey(item: Pick<ShoppingItem, "name" | "unit">): string {
+  return `${item.name.toLowerCase()}|${item.unit}`;
+}
+
+/** Combine a plan's list with saved check-offs and the household's own items. */
+export function toGroceryList(list: ShoppingList | null, checkedKeys: Iterable<string>, extras: ExtraItem[]): GroceryList {
+  const checked = new Set(checkedKeys);
+  return {
+    planId: list?.planId ?? null,
+    items: (list?.items ?? []).map((i) => ({ ...i, key: itemKey(i), checked: checked.has(itemKey(i)) })),
+    extras,
+    pantryExcluded: list?.pantryExcluded ?? [],
+  };
+}
+
+export const AISLE_NAMES: Record<Aisle, string> = {
+  produce: "Produce", "meat-seafood": "Meat & seafood", "dairy-eggs": "Dairy, eggs & fridge", bakery: "Bakery",
+  "grains-pasta": "Grains & pasta", canned: "Canned & jarred", pantry: "Pantry", spices: "Spices", frozen: "Frozen", other: "Other",
+};
+
+export function formatQuantity(q: number, unit: Unit): string {
+  const n = Number.isInteger(q) ? String(q) : q.toFixed(2).replace(/\.?0+$/, "");
+  return unit === "each" ? n : `${n} ${unit}`;
+}
+
+/**
+ * Plain-text list for sharing (messages, notes, email). Grouped by aisle in store
+ * order; checked items are left out unless `includeChecked`.
+ */
+export function groceryListText(list: GroceryList, opts: { title?: string; includeChecked?: boolean } = {}): string {
+  const keep = <T extends { checked: boolean }>(xs: T[]) => (opts.includeChecked ? xs : xs.filter((x) => !x.checked));
+  const lines: string[] = [opts.title ?? "Grocery list"];
+  for (const aisle of AISLE_ORDER) {
+    const items = keep(list.items).filter((i) => i.aisle === aisle);
+    if (!items.length) continue;
+    lines.push("", AISLE_NAMES[aisle]);
+    for (const i of items) lines.push(`- ${i.name} (${formatQuantity(i.quantity, i.unit)})`);
+  }
+  const extras = keep(list.extras);
+  if (extras.length) {
+    lines.push("", "Also");
+    for (const e of extras) lines.push(`- ${e.name}${e.quantity ? ` (${e.quantity})` : ""}`);
+  }
+  if (lines.length === 1) lines.push("", "Nothing left to buy.");
+  return lines.join("\n");
 }

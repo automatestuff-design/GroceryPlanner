@@ -5,7 +5,7 @@
    Chat ─┐   Plan · Groceries · Longevity · Household (tap-first)
          │              │
          ▼              ▼
-   POST /chat     REST /plans, /household, /grocers ...         apps/api (Hono)
+   POST /chat     REST /plans, /household, /shopping-list ...   apps/api (Hono)
          │              │
          ▼              │
    assistant.chatTurn ──┤  Claude (tool use) decides which tool to call
@@ -14,8 +14,7 @@
    core engine: planner · portions · macros · shopping list · longevity    (pure, tested)
          │
          ├── PlannerStore → PostgresStore (as the user, RLS)  |  MemoryStore in dev
-         ├── RecipeProvider → Postgres catalog + Spoonacular + Edamam (cached ≤1h)
-         └── grocers registry → Instacart · Kroger · (Walmart · Amazon · Target via partners)
+         └── RecipeProvider → Postgres catalog + Spoonacular + Edamam (cached ≤1h)
 ```
 
 ## Platforms
@@ -59,7 +58,7 @@ side rail and two-pane chat on tablets and desktop.
   (`signInWithOtp` + `verifyOtp`), keeps the session in AsyncStorage (native) or
   localStorage (web), and refreshes tokens while in the foreground. `Stack.Protected` in
   `app/_layout.tsx` keeps signed-out users on `/sign-in`.
-- **API auth:** every route except `/health` and the Kroger callback needs
+- **API auth:** every route except `/health` needs
   `Authorization: Bearer <Supabase access token>`. `auth.ts` verifies it with the project's
   JWKS (or the legacy HS256 secret), and checks issuer, audience `authenticated` and expiry.
 - **Data access:** the API connects to Supabase Postgres with `pg`. Each request runs in a
@@ -68,8 +67,10 @@ side rail and two-pane chat on tablets and desktop.
   API. Only the live-recipe cache and the catalog ingest use the server's own role.
 - **First sign-in:** `ensure_household()` (security definer) creates the household, the
   owner membership and a "Me" member. Two adults can share a household via `household_users`.
-- **Secrets:** grocer OAuth tokens are AES-256-GCM encrypted with `APP_SECRET_KEY`; the
-  Kroger OAuth `state` is HMAC-signed and expires after 10 minutes.
+- **Grocery list:** computed from the current plan on every read (`loadGroceryList`), so it
+  always matches the plan. Check-offs are saved per plan (`shopping_checks`), so a new plan
+  starts fresh; the household's own items (`shopping_extras`) are kept across plans until
+  removed. Every list change returns the whole updated list.
 - **Tests:** `scripts/test-db.sh` starts a throwaway Postgres with Supabase stand-ins
   (`supabase/test/supabase-stubs.sql`) and all migrations; `npm run test:all` runs the RLS,
   store and full-API tests against it.

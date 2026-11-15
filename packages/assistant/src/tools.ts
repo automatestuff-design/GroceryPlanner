@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
-  WEEKDAYS, buildShoppingList, defaultSlots, generateWeekPlan, swapMeal, weeklyLongevityReport, queryForPlan,
-  dailyTargets, type Household, type Member, type PlanRequest, type Recipe, type RecipeProvider, type WeekPlan,
+  WEEKDAYS, defaultSlots, formatQuantity, generateWeekPlan, swapMeal, weeklyLongevityReport, queryForPlan,
+  dailyTargets, type GroceryList, type Household, type Member, type PlanRequest, type Recipe, type RecipeProvider, type WeekPlan,
 } from "@mealplan/core";
-import type { GrocerRegistry } from "@mealplan/grocers";
 import type { Card } from "./cards";
+import { findByName, loadGroceryList } from "./groceryList";
 import type { PlannerStore } from "./store";
 
 const MealType = z.enum(["breakfast", "lunch", "dinner", "snack"]);
@@ -28,7 +28,6 @@ export interface ToolContext {
   userId: string;
   store: PlannerStore;
   recipes: RecipeProvider;
-  grocers: GrocerRegistry;
   cards: Card[];
   /** Imports a recipe page into this household's private library. Absent when importing is disabled. */
   importRecipe?: (url: string) => Promise<Recipe>;
@@ -47,7 +46,7 @@ const tool = <S extends z.ZodType>(d: ToolDef<S>) => d;
  */
 export const TOOLS = {
   get_household: tool({
-    description: "Read the user's household: personal or family mode, members, diet, allergies, pantry and preferred grocer. Call this first in a new conversation.",
+    description: "Read the user's household: personal or family mode, members, diet, allergies and pantry staples. Call this first in a new conversation.",
     input: z.strictObject({}),
     run: async (_, ctx) => {
       const h = await ctx.store.getHousehold(ctx.userId);
@@ -56,7 +55,7 @@ export const TOOLS = {
   }),
 
   update_household: tool({
-    description: "Change household settings: switch between personal (just me) and family mode, set the diet, add/update/remove members, update pantry staples or the preferred grocer. Only pass fields that change.",
+    description: "Change household settings: switch between personal (just me) and family mode, set the diet, add/update/remove members, or update pantry staples (always-on-hand items left off the grocery list). Only pass fields that change.",
     input: z.strictObject({
       mode: z.enum(["personal", "family"]).optional(),
       diet: z.enum(["omnivore", "pescatarian", "vegetarian", "vegan", "keto", "paleo", "mediterranean"]).optional(),
@@ -64,8 +63,6 @@ export const TOOLS = {
       removeMembers: z.array(z.string()).optional().describe("Names of members to remove"),
       pantryAdd: z.array(z.string()).optional(),
       pantryRemove: z.array(z.string()).optional(),
-      preferredGrocer: z.enum(["instacart", "kroger", "walmart", "amazon-fresh", "target"]).optional(),
-      postalCode: z.string().optional(),
     }),
     run: async (input, ctx) => {
       const h = await ctx.store.getHousehold(ctx.userId);
@@ -73,8 +70,6 @@ export const TOOLS = {
         ...h,
         mode: input.mode ?? h.mode,
         diet: input.diet ?? h.diet,
-        preferredGrocer: input.preferredGrocer ?? h.preferredGrocer,
-        postalCode: input.postalCode ?? h.postalCode,
         pantry: [...new Set([...h.pantry, ...(input.pantryAdd ?? [])])].filter((p) => !input.pantryRemove?.includes(p)),
         members: upsertMembers(h.members, input.upsertMembers ?? [], input.removeMembers ?? []),
       };
@@ -133,13 +128,68 @@ export const TOOLS = {
   }),
 
   get_shopping_list: tool({
-    description: "Build the grocery list for the current plan, scaled to the household and grouped by aisle. Pantry staples are left off.",
+    description: "Show the grocery list: the current plan's ingredients (scaled to the household, grouped by aisle, pantry staples left off) plus items the user added themselves, with what's already checked off. Works without a plan.",
     input: z.strictObject({}),
     run: async (_, ctx) => {
-      const { current, recipes, household } = await requirePlan(ctx);
-      const list = buildShoppingList(current.plan, byId(recipes), household.pantry);
+      const list = await loadGroceryList(ctx.store, ctx.recipes, await ctx.store.getHousehold(ctx.userId));
       ctx.cards.push({ type: "shopping-list", list });
-      return { itemCount: list.items.length, pantryExcluded: list.pantryExcluded, items: list.items.map((i) => `${i.quantity} ${i.unit} ${i.name}`) };
+      return summariseList(list);
+    },
+  }),
+
+  add_to_shopping_list: tool({
+    description: "Add items the user wants that aren't from the meal plan (\"paper towels\", \"2 litres of milk\"). They stay on the list when the plan changes, until removed.",
+    input: z.strictObject({
+      items: z.array(z.strictObject({
+        name: z.string().min(1).max(80),
+        quantity: z.string().max(40).optional().describe("Free text, e.g. '2 rolls' or '1 L'"),
+      })).min(1).max(30),
+    }),
+    run: async (input, ctx) => {
+      const household = await ctx.store.getHousehold(ctx.userId);
+      const added = await ctx.store.addExtras(household.id, input.items);
+      const list = await loadGroceryList(ctx.store, ctx.recipes, household);
+      ctx.cards.push({ type: "shopping-list", list });
+      return { added: added.map((a) => a.name), list: summariseList(list) };
+    },
+  }),
+
+  update_shopping_list: tool({
+    description:
+      "Check off items the user has bought or already has, uncheck them, or remove items they added themselves. Plan ingredients can't be removed, only checked off; for things they always keep at home, add them to the pantry with update_household instead.",
+    input: z.strictObject({
+      checkOff: z.array(z.string()).optional().describe("Item names to mark as got"),
+      uncheck: z.array(z.string()).optional(),
+      remove: z.array(z.string()).optional().describe("Names of items the user added themselves"),
+    }),
+    run: async (input, ctx) => {
+      const household = await ctx.store.getHousehold(ctx.userId);
+      let list = await loadGroceryList(ctx.store, ctx.recipes, household);
+      const notFound: string[] = [];
+      const cantRemove: string[] = [];
+
+      const setChecked = async (name: string, checked: boolean) => {
+        const item = findByName(list.items, name);
+        if (item && list.planId) return ctx.store.setChecked(list.planId, item.key, checked);
+        const extra = findByName(list.extras, name);
+        if (extra) return void (await ctx.store.updateExtra(household.id, extra.id, { checked }));
+        notFound.push(name);
+      };
+      for (const n of input.checkOff ?? []) await setChecked(n, true);
+      for (const n of input.uncheck ?? []) await setChecked(n, false);
+
+      const removeIds: string[] = [];
+      for (const n of input.remove ?? []) {
+        const extra = findByName(list.extras, n);
+        if (extra) removeIds.push(extra.id);
+        else if (findByName(list.items, n)) cantRemove.push(n);
+        else notFound.push(n);
+      }
+      await ctx.store.removeExtras(household.id, removeIds);
+
+      list = await loadGroceryList(ctx.store, ctx.recipes, household);
+      ctx.cards.push({ type: "shopping-list", list });
+      return { notFound, cantRemoveBecauseFromPlan: cantRemove, list: summariseList(list) };
     },
   }),
 
@@ -164,29 +214,6 @@ export const TOOLS = {
     },
   }),
 
-  list_grocers: tool({
-    description: "List grocery integrations, which are live, and which need a partnership before ordering works.",
-    input: z.strictObject({}),
-    run: async (_, ctx) => ctx.grocers.list(),
-  }),
-
-  send_to_grocer: tool({
-    description: "Send the current grocery list to a grocer. Creates a cart or cart link the user reviews and checks out themselves; it never places or pays for an order. Ask the user which grocer first if they have no preference.",
-    input: z.strictObject({ grocer: z.enum(["instacart", "kroger", "walmart", "amazon-fresh", "target"]).optional() }),
-    run: async (input, ctx) => {
-      const { current, recipes, household } = await requirePlan(ctx);
-      const adapter = input.grocer ? ctx.grocers.get(input.grocer) : ctx.grocers.pick(household.preferredGrocer);
-      if (!adapter) throw new Error("No grocer is configured yet.");
-      const info = adapter.info();
-      const list = buildShoppingList(current.plan, byId(recipes), household.pantry);
-      const cart = await adapter.createCart(list, {
-        postalCode: household.postalCode, title: `Meals for the week of ${current.plan.weekStart}`,
-        userAccessToken: await ctx.store.grocerToken?.(ctx.userId, info.id),
-      });
-      ctx.cards.push({ type: "cart", cart, grocerName: info.name });
-      return { grocer: info.name, status: info.status, checkoutUrl: cart.checkoutUrl, matched: cart.matched.length, unmatched: cart.unmatched.map((u) => u.name) };
-    },
-  }),
 };
 
 export type ToolName = keyof typeof TOOLS;
@@ -258,4 +285,15 @@ function nextMonday(from = new Date()): string {
   const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
   d.setUTCDate(d.getUTCDate() + (((8 - d.getUTCDay()) % 7) || 7));
   return d.toISOString().slice(0, 10);
+}
+
+/** Compact view of the list for the model: what's left, what's done, what the user added. */
+function summariseList(list: GroceryList) {
+  return {
+    hasPlan: list.planId !== null,
+    toBuy: list.items.filter((i) => !i.checked).map((i) => `${i.name} (${formatQuantity(i.quantity, i.unit)})`),
+    checkedOff: list.items.filter((i) => i.checked).map((i) => i.name),
+    ownItems: list.extras.map((e) => ({ name: e.name, quantity: e.quantity, checked: e.checked })),
+    pantryLeftOff: list.pantryExcluded,
+  };
 }

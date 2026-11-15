@@ -1,8 +1,9 @@
 # GroceryPlanner
 
 Chat-first meal planner (personal or family, plan by meal type or macros, Longevity
-track, grocery hand-off). npm workspaces monorepo, TypeScript throughout. The README has
-product context and setup; `docs/` has architecture, recipes, grocers, Longevity, roadmap.
+track) with a shared grocery list. No grocer ordering or store prices: removed on purpose,
+since grocers don't offer that data to outside apps (see docs/ROADMAP.md before re-adding). npm workspaces monorepo, TypeScript throughout. The README has
+product context and setup; `docs/` has architecture, recipes, Longevity, roadmap.
 
 ## Commands
 
@@ -30,9 +31,9 @@ The script needs local Postgres binaries (`/usr/lib/postgresql/*/bin`) and stubs
   shopping list, Longevity scoring, `RecipeProvider`). Pure: no I/O.
 - `packages/recipes`: normaliser plus sources (Spoonacular, Edamam, schema.org JSON-LD),
   `createRecipeProvider`, catalog ingest.
-- `packages/grocers`: `GrocerAdapter` plus Instacart, Kroger and partner adapters.
 - `packages/assistant`: Claude tool-use agent; tools are zod schemas over the engine.
-- `packages/db`: `PostgresStore`, recipe catalog/cache, token encryption.
+  `loadGroceryList` is the one place the list is assembled, for chat and the API alike.
+- `packages/db`: `PostgresStore` (households, plans, chat, grocery list), recipe catalog/cache.
 - `apps/api`: Hono server, Supabase JWT auth (`auth.ts`), backend wiring (`backend.ts`).
 - `apps/app`: Expo Router app (iOS, Android, web/desktop).
 - `supabase/migrations`: schema and RLS. Add new migrations; never edit applied ones.
