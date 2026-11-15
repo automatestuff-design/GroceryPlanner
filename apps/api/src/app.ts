@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import type Anthropic from "@anthropic-ai/sdk";
 import { chatTurn, loadGroceryList } from "@mealplan/assistant";
@@ -9,7 +10,7 @@ import {
   type Household, type MealType, type PlanRequest, type PlanStrategy, type PlanTrack, type Weekday,
 } from "@mealplan/core";
 import type { Claims } from "@mealplan/db";
-import { JsonLdError } from "@mealplan/recipes";
+import { JsonLdError, NeedsDetailsError } from "@mealplan/recipes";
 import type { Backend, RequestServices } from "./backend";
 
 export interface AppDeps {
@@ -58,7 +59,7 @@ export function createApp(deps: AppDeps) {
     const svc = c.get("svc");
     const history = (await svc.store.getConversation(sub, conversationId)) as Anthropic.Beta.BetaMessageParam[];
     const result = await chatTurn(
-      { store: svc.store, recipes: svc.recipes, client: deps.anthropic, importRecipe: svc.importRecipe },
+      { store: svc.store, recipes: svc.recipes, client: deps.anthropic, importRecipe: async (req) => (await svc.importRecipe(req)).recipe },
       sub, history, text,
     );
     await svc.store.saveConversation(sub, conversationId, result.messages);
@@ -126,11 +127,17 @@ export function createApp(deps: AppDeps) {
     if (!r) throw new HTTPException(404, { message: "Recipe not found" });
     return c.json(r);
   });
-  app.post("/recipes/import", async (c) => {
-    const { url } = await c.req.json<{ url: string }>();
+  /**
+   * Save a shared recipe: { url?, text?, images? }. A TikTok link needs text or
+   * screenshots too; without them the answer is 422 with code "needs_details" and the
+   * video's creator, so the app can ask for the recipe.
+   */
+  app.post("/recipes/import", bodyLimit({ maxSize: 30 * 1024 * 1024, onError: (c) => c.json({ error: "Those images are too large. Try fewer or smaller screenshots." }, 413) }), async (c) => {
+    const body = parse(ImportBody, await c.req.json());
     try {
-      return c.json(await c.get("svc").importRecipe(url), 201);
+      return c.json(await c.get("svc").importRecipe(body), 201);
     } catch (err) {
+      if (err instanceof NeedsDetailsError) return c.json({ error: err.message, code: "needs_details", video: err.video ?? null }, 422);
       if (err instanceof JsonLdError || err instanceof TypeError) throw new HTTPException(422, { message: err.message });
       throw err;
     }
@@ -207,6 +214,16 @@ export function corsOrigins(raw: string | undefined): string | string[] {
 
 const Allergen = z.enum(["gluten", "dairy", "egg", "peanut", "tree-nut", "soy", "fish", "shellfish", "sesame"]);
 /** What a client may change directly. Unknown fields (id, anything else) are dropped. */
+/** Screenshots: up to 4, each up to ~5 MB (base64 is a third larger than the file). */
+const ImportBody = z.object({
+  url: z.string().trim().url().max(2000).optional(),
+  text: z.string().max(20_000).optional(),
+  images: z.array(z.object({
+    mediaType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
+    data: z.string().min(1).max(7_000_000).regex(/^[A-Za-z0-9+/=\s]+$/, "Images must be base64"),
+  })).max(4).optional(),
+}).refine((b) => b.url || b.text?.trim() || b.images?.length, "Send a recipe link, the recipe text, or a screenshot.");
+
 const CheckBody = z.object({ key: z.string().min(1).max(200), checked: z.boolean() });
 const ExtraInput = z.object({ name: z.string().trim().min(1).max(80), quantity: z.string().trim().max(40).optional() });
 const AddExtrasBody = z.object({ items: z.array(ExtraInput).min(1).max(50) });

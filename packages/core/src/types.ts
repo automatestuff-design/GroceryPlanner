@@ -73,6 +73,8 @@ export interface Ingredient {
   allergens?: Allergen[];
   /** Counts toward the Longevity "plant diversity" goal. */
   plant?: boolean;
+  /** The line as the recipe wrote it ("2 cloves garlic, minced"), for display. */
+  original?: string;
 }
 
 export interface LongevityProfile {
@@ -119,6 +121,21 @@ export interface Recipe {
   longevity: LongevityProfile;
   imageUrl?: string;
   source?: RecipeSourceInfo;
+  /** How the nutrition was obtained. Absent for curated recipes. */
+  nutritionBasis?: NutritionBasis;
+}
+
+export interface NutritionBasis {
+  /** "published": the source stated it. "calculated": computed from the ingredients. */
+  method: "published" | "calculated";
+  /** For calculated nutrition, the database used ("Canadian Nutrient File 2026"). */
+  database?: string;
+  /** Ingredients that matter but couldn't be counted (not found, or no amount given). */
+  missing: string[];
+  /** Ingredients counted with a fallback match or weight. */
+  uncertain: string[];
+  /** True when the servings count was estimated because the recipe didn't say. */
+  servingsEstimated?: boolean;
 }
 
 /** What the planner asks a recipe provider for. */

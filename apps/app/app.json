@@ -7,10 +7,36 @@
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": { "bundleIdentifier": "com.automatestuff.simmer", "supportsTablet": true },
-    "android": { "package": "com.automatestuff.simmer", "edgeToEdgeEnabled": true },
-    "web": { "bundler": "metro", "output": "single", "name": "Simmer", "shortName": "Simmer", "themeColor": "#1F9D55", "backgroundColor": "#FFFFFF", "display": "standalone" },
-    "plugins": ["expo-router"],
-    "experiments": { "typedRoutes": true }
+    "ios": {
+      "bundleIdentifier": "com.automatestuff.simmer",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.automatestuff.simmer",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "Simmer",
+      "shortName": "Simmer",
+      "themeColor": "#1F9D55",
+      "backgroundColor": "#FFFFFF",
+      "display": "standalone"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose screenshots or photos of a recipe to save it to your recipes.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }

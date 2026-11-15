@@ -29,8 +29,8 @@ export interface ToolContext {
   store: PlannerStore;
   recipes: RecipeProvider;
   cards: Card[];
-  /** Imports a recipe page into this household's private library. Absent when importing is disabled. */
-  importRecipe?: (url: string) => Promise<Recipe>;
+  /** Saves a shared recipe (link and/or pasted text) to this household's private library. Absent when importing is disabled. */
+  importRecipe?: (req: { url?: string; text?: string }) => Promise<Recipe>;
 }
 
 interface ToolDef<S extends z.ZodType> {
@@ -204,13 +204,27 @@ export const TOOLS = {
     },
   }),
 
-  import_recipe_from_url: tool({
-    description: "Save a recipe from a web page the user shares into their household's private recipe library, so the planner can use it. Only works for pages that publish nutrition information.",
-    input: z.strictObject({ url: z.string().describe("The recipe page URL the user gave") }),
+  save_recipe: tool({
+    description:
+      "Save a recipe the user shares into their household's private recipe library so the planner can use it. Accepts a recipe web page link, a TikTok link, or the recipe text the user pasted (ingredients with amounts), or a link plus pasted text. TikTok doesn't share captions with apps, so a TikTok link needs the pasted ingredients too; if the user only gave the link, the result explains what to send. Nutrition is calculated from the ingredients when the source doesn't publish it.",
+    input: z.strictObject({
+      url: z.string().optional().describe("Recipe page or TikTok link the user gave"),
+      recipeText: z.string().optional().describe("The recipe or ingredient list the user pasted, verbatim"),
+    }),
     run: async (input, ctx) => {
       if (!ctx.importRecipe) throw new Error("Recipe import isn't available right now.");
-      const r = await ctx.importRecipe(input.url);
-      return { id: r.id, title: r.title, servings: r.servings, minutes: r.timeMinutes, perServing: r.nutritionPerServing, mealTypes: r.mealTypes };
+      if (!input.url && !input.recipeText?.trim()) throw new Error("Ask the user for a recipe link or the recipe text.");
+      const r = await ctx.importRecipe({ url: input.url, text: input.recipeText });
+      return {
+        id: r.id, title: r.title, servings: r.servings, minutes: r.timeMinutes, perServing: r.nutritionPerServing, mealTypes: r.mealTypes,
+        source: r.source?.name,
+        nutrition: r.nutritionBasis && {
+          how: r.nutritionBasis.method === "published" ? "published by the source" : `calculated from the ingredients (${r.nutritionBasis.database})`,
+          notCounted: r.nutritionBasis.missing,
+          approximate: r.nutritionBasis.uncertain,
+          servingsEstimated: r.nutritionBasis.servingsEstimated ?? false,
+        },
+      };
     },
   }),
 

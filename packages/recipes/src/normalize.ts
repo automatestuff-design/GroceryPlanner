@@ -122,6 +122,7 @@ export function toIngredient(line: string, parsed?: { quantity?: number; unit?: 
     aisle: classifyAisle(name),
     allergens: detectAllergens(`${name} ${line}`.toLowerCase()),
     plant: isPlant(name),
+    ...(line.trim() ? { original: line.trim() } : {}),
   };
 }
 
@@ -190,6 +191,7 @@ export function buildRecipe(args: {
   declaredDiets?: Diet[];
   imageUrl?: string;
   source: Recipe["source"];
+  nutritionBasis?: Recipe["nutritionBasis"];
 }): Recipe {
   const timeMinutes = args.timeMinutes && args.timeMinutes > 0 ? args.timeMinutes : 45;
   const perServing = { ...args.perServing, fiberG: args.perServing.fiberG ?? 0 };
@@ -209,6 +211,7 @@ export function buildRecipe(args: {
     longevity: deriveLongevity(args.ingredients, perServing),
     imageUrl: args.imageUrl,
     source: args.source,
+    ...(args.nutritionBasis ? { nutritionBasis: args.nutritionBasis } : {}),
   };
 }
 

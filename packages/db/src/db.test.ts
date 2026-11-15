@@ -155,16 +155,22 @@ describe.skipIf(!url)("Postgres store (RLS)", () => {
     it("keeps household imports private", async () => {
       const aliceHousehold = await new PostgresStore(pool, alice).getHousehold(alice.sub);
       const source = SAMPLE_RECIPES.find((r) => r.id === "lentil-curry")!;
+      const basis = { method: "calculated" as const, database: "Canadian Nutrient File 2026", missing: ["a pinch of love"], uncertain: [], servingsEstimated: true };
       const imported = await postgresCatalog(pool, alice).importForHousehold(
-        { ...source, id: "jsonld:grandmas-dal", title: "Grandma's Dal", source: { provider: "jsonld", name: "Family blog", url: "https://example.org/dal" } },
+        { ...source, id: "tiktok:grandmas-dal", title: "Grandma's Dal", nutritionBasis: basis, source: { provider: "tiktok", name: "@grandma on TikTok", url: "https://www.tiktok.com/@grandma/video/123456789" } },
         aliceHousehold.id,
       );
       expect(imported.id).toMatch(/^import:/);
-      expect((await postgresCatalog(pool, alice).getMany([imported.id]))[0]?.title).toBe("Grandma's Dal");
+      const [saved] = await postgresCatalog(pool, alice).getMany([imported.id]);
+      expect(saved?.title).toBe("Grandma's Dal");
+      expect(saved?.nutritionBasis).toEqual(basis);
+      expect(saved?.source).toMatchObject({ provider: "import", name: "@grandma on TikTok" });
       expect(await postgresCatalog(pool, bob).getMany([imported.id])).toEqual([]);
 
       // Bob can't import into Alice's household.
-      await expect(postgresCatalog(pool, bob).importForHousehold({ ...source, id: "x:y" }, aliceHousehold.id)).rejects.toThrow(/row-level security/);
+      await expect(postgresCatalog(pool, bob).importForHousehold({ ...source, id: "x:y", nutritionBasis: basis }, aliceHousehold.id)).rejects.toThrow(/row-level security/);
+      // A household import must say how its nutrition was obtained.
+      await expect(postgresCatalog(pool, alice).importForHousehold({ ...source, id: "x:no-basis" }, aliceHousehold.id)).rejects.toThrow(/recipes_import_has_basis/);
     });
   });
 

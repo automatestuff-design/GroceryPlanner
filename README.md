@@ -18,6 +18,9 @@ can tick off in the store or share with whoever's shopping.
   check things off (saved, so the list matches on every device and in chat), and share it
   as text. The app doesn't order groceries or compare store prices: no grocer offers that
   data to outside apps in Canada, so it was taken out (see the Roadmap).
+- **Save recipes from anywhere:** a recipe site, a TikTok (with the ingredients pasted or a
+  screenshot), a cookbook photo or your own. Claude reads it; nutrition is calculated from
+  Health Canada's Canadian Nutrient File and the app says what it couldn't count.
 - **One codebase for iOS, Android and desktop:** Expo (React Native + React Native Web).
 
 ## Layout
@@ -27,7 +30,9 @@ meal-planner/
 ├── packages/
 │   ├── core/        Domain types + deterministic engine: portions, macros, planner,
 │   │                shopping list, longevity scoring. Seed recipes. (no I/O)
-│   ├── recipes/     Recipe sources (Spoonacular, Edamam, schema.org JSON-LD),
+│   ├── recipes/     Recipe sources (Spoonacular, Edamam, schema.org JSON-LD), TikTok /
+│   │                photo / pasted-recipe import, nutrition from Health Canada's
+│   │                Canadian Nutrient File (data/), recipe extraction with Claude,
 │   │                normaliser, provider that merges catalog + live APIs, ingest
 │   ├── assistant/   Claude tool-use agent: system prompt, tools over the engine,
 │   │                UI cards, quick replies, PlannerStore interface
@@ -66,7 +71,8 @@ header, and the app skips sign-in. Dev mode refuses to start when `NODE_ENV=prod
    - **Dashboard:** SQL Editor → New query → paste `supabase/migrations/20261114000000_meal_planner.sql`
      → Run. Repeat, one new query per file, with `20261115000000_auth_and_recipe_sources.sql`,
      `20261116000000_api_role_membership.sql` (lets the API act as the signed-in user), and
-     `20261117000000_lists_not_ordering.sql` (grocery list items; removes the old grocer tables).
+     `20261117000000_lists_not_ordering.sql` (grocery list items; removes the old grocer tables),
+     and `20261118000000_recipe_nutrition_basis.sql` (records how a saved recipe's nutrition was worked out).
    - **CLI:** `supabase login`, `supabase init` (keeps the existing `supabase/migrations/`),
      `supabase link --project-ref <ref>`, then `supabase db push`. It records which migrations
      ran, so later ones apply with another `db push`.

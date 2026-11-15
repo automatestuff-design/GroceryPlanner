@@ -56,8 +56,27 @@ describe("schema.org JSON-LD", () => {
     expect(r.source).toMatchObject({ name: "Example Kitchen", license: "CC-BY-4.0" });
   });
 
-  it("rejects recipes without nutrition", () => {
+  it("uses published nutrition when the page has it", () => {
+    const r = recipeFromJsonLd(extractRecipeJsonLd(fixture("recipe-page.html"))!, { url: "https://example.org/salmon" });
+    expect(r.nutritionBasis).toEqual({ method: "published", missing: [], uncertain: [] });
+  });
+
+  it("calculates nutrition from the ingredients when the page doesn't publish it", () => {
     const html = fixture("recipe-page.html").replace(/"nutrition":\{[^}]*\}/, '"nutrition":null');
+    const r = recipeFromJsonLd(extractRecipeJsonLd(html)!, { url: "https://example.org/x" });
+    expect(r.nutritionBasis?.method).toBe("calculated");
+    expect(r.nutritionBasis?.database).toBe("Canadian Nutrient File 2026");
+    // 1.5 lb salmon + 1 cup dry lentils + oil, yogurt... over 4 servings: a hearty, high-protein dinner.
+    expect(r.nutritionPerServing.calories).toBeGreaterThan(450);
+    expect(r.nutritionPerServing.calories).toBeLessThan(800);
+    expect(r.nutritionPerServing.proteinG).toBeGreaterThan(40);
+    expect(r.nutritionBasis?.missing).toEqual([]);
+  });
+
+  it("still rejects a page whose amounts can't be read", () => {
+    const html = fixture("recipe-page.html")
+      .replace(/"nutrition":\{[^}]*\}/, '"nutrition":null')
+      .replace(/"recipeIngredient":\[[^\]]*\]/, '"recipeIngredient":["salmon","lentils","olive oil"]');
     expect(() => recipeFromJsonLd(extractRecipeJsonLd(html)!, { url: "https://example.org/x" })).toThrow(/nutrition/);
   });
 

@@ -12,6 +12,19 @@ export type Card =
 
 export interface ChatReply { text: string; cards: Card[]; quickReplies: string[] }
 
+/** An error from the API, with its machine-readable code when it has one (e.g. "needs_details"). */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string, readonly data?: Record<string, unknown>) {
+    super(message);
+  }
+}
+
+export interface ImportImage { mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif"; data: string }
+export interface ImportResult {
+  recipe: Recipe;
+  lines: { text: string; status: "ok" | "no-match" | "no-amount"; food?: { code: number; description: string }; grams?: number; confidence: "high" | "low"; calories?: number }[];
+}
+
 const BASE = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8787";
 
 /** Signed in: the Supabase access token. Dev mode (no Supabase configured): a fixed dev user. */
@@ -25,7 +38,10 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: { "content-type": "application/json", ...(await authHeaders()), ...(init.headers ?? {}) },
   });
-  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `Request failed (${res.status})`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status, body?.code, body ?? undefined);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -47,7 +63,9 @@ export const api = {
   clearChecked: () => req<GroceryList>("/shopping-list/clear-checked", { method: "POST" }),
   longevity: () => req<LongevityReport>("/plans/current/longevity"),
   recipe: (id: string) => req<Recipe>(`/recipes/${encodeURIComponent(id)}`),
-  importRecipe: (url: string) => req<Recipe>("/recipes/import", { method: "POST", body: JSON.stringify({ url }) }),
+  /** Save a shared recipe: a link (web page or TikTok), pasted text, and/or screenshots. */
+  importRecipe: (body: { url?: string; text?: string; images?: ImportImage[] }) =>
+    req<ImportResult>("/recipes/import", { method: "POST", body: JSON.stringify(body) }),
 };
 
 export function nextMonday(): string {

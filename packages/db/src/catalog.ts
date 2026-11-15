@@ -61,7 +61,7 @@ export function postgresCatalog(pool: Db, claims: Claims): UserCatalog {
       await asUser(pool, claims, (tx) =>
         tx.query(
           `insert into recipes (${UPSERT_COLUMNS}, household_id, imported_by)
-           values (${UPSERT_PLACEHOLDERS}, $21, $22)
+           values (${UPSERT_PLACEHOLDERS}, $22, $23)
            on conflict (id) do nothing`,
           [...recipeToParams(recipe), householdId, claims.sub],
         ),
@@ -86,7 +86,7 @@ export function postgresCatalogWriter(pool: Db): CatalogWriter {
                steps = excluded.steps, nutrition_per_serving = excluded.nutrition_per_serving,
                longevity = excluded.longevity, image_url = excluded.image_url, source_name = excluded.source_name,
                source_url = excluded.source_url, attribution = excluded.attribution, license = excluded.license,
-               allergens = excluded.allergens`,
+               allergens = excluded.allergens, nutrition_basis = excluded.nutrition_basis`,
             recipeToParams(r),
           );
         }

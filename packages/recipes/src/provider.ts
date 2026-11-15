@@ -1,6 +1,9 @@
 import { matchesQuery, staticRecipeProvider, type Recipe, type RecipeProvider, type RecipeQuery } from "@mealplan/core";
 import { providerOf, type RecipeCache, type RecipeCatalog, type RecipeSource } from "./types";
 
+/** Providers whose recipes may only be cached, never served from the catalog, even when their keys aren't set. */
+const LIVE_PROVIDERS = new Set(["spoonacular", "edamam"]);
+
 export interface ProviderDeps {
   catalog: RecipeCatalog;
   sources?: RecipeSource[];
@@ -43,7 +46,9 @@ export function createRecipeProvider(deps: ProviderDeps): RecipeProvider {
     async getMany(ids: string[]) {
       const groups = groupBy([...new Set(ids)], providerOf);
       const out: Recipe[] = [];
-      const catalogIds = [...(groups.get("catalog") ?? []), ...(groups.get("jsonld") ?? []), ...(groups.get("import") ?? [])];
+      // Live sources own their ids ("spoonacular:…"); everything else lives in the catalog
+      // (curated, licensed imports, and a household's own "import:"/"tiktok:"/"note:" recipes).
+      const catalogIds = [...groups].filter(([provider]) => !byProvider.has(provider) && !LIVE_PROVIDERS.has(provider)).flatMap(([, pids]) => pids);
       if (catalogIds.length) out.push(...(await deps.catalog.getMany(catalogIds, deps.householdId)));
 
       for (const [provider, pids] of groups) {

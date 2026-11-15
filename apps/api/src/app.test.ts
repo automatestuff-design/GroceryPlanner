@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type Anthropic from "@anthropic-ai/sdk";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SignJWT } from "jose";
 import { SAMPLE_RECIPES } from "@mealplan/core";
 import { createPool, postgresCatalogWriter, type Db } from "@mealplan/db";
@@ -7,6 +8,25 @@ import { createApp } from "./app";
 import { devBackend, supabaseBackend } from "./backend";
 
 const json = { "content-type": "application/json" };
+
+const TIKTOK = "https://www.tiktok.com/@jordos_world/video/7389268050421304619";
+
+/** Stand-in for Claude reading a pasted recipe. */
+function fakeClaude() {
+  const parse = vi.fn().mockResolvedValue({
+    stop_reason: "end_turn",
+    parsed_output: {
+      isRecipe: true, problem: null, title: "Salsa Chicken & Rice", servings: 4, servingsStated: true, totalMinutes: 240, mealTypes: ["dinner"],
+      steps: ["Slow cook the chicken in the salsa, shred, serve over rice."],
+      ingredients: [
+        { text: "2 lb chicken breasts", name: "chicken breast", quantity: 2, unit: "lb" },
+        { text: "16 oz salsa", name: "salsa", quantity: 16, unit: "oz" },
+        { text: "2 cups cooked rice", name: "cooked white rice", quantity: 2, unit: "cup" },
+      ],
+    },
+  });
+  return { client: { beta: { messages: { parse } } } as unknown as Anthropic, parse };
+}
 
 describe("api (dev backend)", () => {
   const h = { "x-user-id": "u1", ...json };
@@ -54,6 +74,59 @@ describe("api (dev backend)", () => {
     const app = createApp({ backend: devBackend({ sources: [] }) });
     const res = await app.request("/household", { method: "PATCH", headers: h, body: JSON.stringify({ diet: "carnivore-plus" }) });
     expect(res.status).toBe(400);
+  });
+
+  describe("saving shared recipes", () => {
+    const post = (app: ReturnType<typeof createApp>, body: unknown) =>
+      app.request("/recipes/import", { method: "POST", headers: h, body: JSON.stringify(body) });
+
+    it("asks for the recipe when a TikTok link comes alone", async () => {
+      const { client, parse } = fakeClaude();
+      const res = await post(createApp({ backend: devBackend({ sources: [], anthropic: client }) }), { url: TIKTOK });
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body).toMatchObject({ code: "needs_details", video: { creator: "@jordos_world", videoId: "7389268050421304619" } });
+      expect(parse).not.toHaveBeenCalled();
+    });
+
+    it("saves a TikTok recipe with calculated nutrition, then plans with it", async () => {
+      const { client } = fakeClaude();
+      const app = createApp({ backend: devBackend({ sources: [], anthropic: client }) });
+      const res = await post(app, { url: TIKTOK, text: "Salsa chicken: 2 lb chicken breasts, 16 oz salsa, 2 cups cooked rice" });
+      expect(res.status).toBe(201);
+      const { recipe, lines } = await res.json();
+      expect(recipe.source).toMatchObject({ name: "@jordos_world on TikTok", url: TIKTOK });
+      expect(recipe.nutritionBasis).toMatchObject({ method: "calculated", database: "Canadian Nutrient File 2026", missing: [] });
+      expect(recipe.nutritionPerServing.proteinG).toBeGreaterThan(50);
+      expect(lines).toHaveLength(3);
+
+      expect((await (await app.request(`/recipes/${encodeURIComponent(recipe.id)}`, { headers: h })).json()).title).toBe("Salsa Chicken & Rice");
+      const plan = await (await app.request("/plans", { method: "POST", headers: h, body: JSON.stringify({ strategy: "meal-type", track: "standard", weekStart: "2026-11-16", focus: "salsa" }) })).json();
+      expect(plan.meals.map((m: { recipeId: string }) => m.recipeId)).toContain(recipe.id);
+    });
+
+    it("saves pasted text without a link, and validates the request", async () => {
+      const { client } = fakeClaude();
+      const app = createApp({ backend: devBackend({ sources: [], anthropic: client }) });
+      const res = await post(app, { text: "my mom's salsa chicken..." });
+      expect(res.status).toBe(201);
+      expect((await res.json()).recipe.source).toEqual({ provider: "note", name: "Your recipe" });
+
+      expect((await post(app, {})).status).toBe(400);
+      expect((await post(app, { url: "not a url" })).status).toBe(400);
+      const img = { mediaType: "image/png", data: "iVBORw0KGgo=" };
+      expect((await post(app, { url: TIKTOK, images: [img, img, img, img, img] })).status).toBe(400);
+      expect((await post(app, { url: TIKTOK, images: [{ mediaType: "image/svg+xml", data: "PHN2Zz4=" }] })).status).toBe(400);
+    });
+
+    it("reads pasted text when a web page has no recipe data", async () => {
+      const { client } = fakeClaude();
+      const fetchPage = vi.fn().mockRejectedValue(new Error("No recipe data found on that page."));
+      const app = createApp({ backend: devBackend({ sources: [], anthropic: client, fetchPage }) });
+      const res = await post(app, { url: "https://grandmas-blog.example/dal", text: "2 lb chicken..." });
+      expect(res.status).toBe(201);
+      expect((await res.json()).recipe.source).toMatchObject({ name: "grandmas-blog.example", url: "https://grandmas-blog.example/dal" });
+    });
   });
 
   it("rejects unsafe import URLs with a 422", async () => {
@@ -181,5 +254,25 @@ describe.skipIf(!dbUrl)("api (Supabase backend)", () => {
 
     const report = await (await a.request("/plans/current/longevity", { headers: auth })).json();
     expect(report.avgScore).toBeGreaterThan(0);
+  });
+
+  it("saves a TikTok recipe privately with how its nutrition was worked out", async () => {
+    const { client } = fakeClaude();
+    const a = createApp({ backend: supabaseBackend({ pool, supabaseUrl: SUPABASE_URL, jwtSecret: JWT_SECRET, sources: [], anthropic: client }) });
+    const auth = { authorization: `Bearer ${await token(userId)}`, ...json };
+    const res = await a.request("/recipes/import", { method: "POST", headers: auth, body: JSON.stringify({ url: TIKTOK, text: "Salsa chicken..." }) });
+    expect(res.status).toBe(201);
+    const { recipe } = await res.json();
+    expect(recipe.id).toMatch(/^import:/);
+    const saved = await (await a.request(`/recipes/${encodeURIComponent(recipe.id)}`, { headers: auth })).json();
+    expect(saved.nutritionBasis).toMatchObject({ method: "calculated", database: "Canadian Nutrient File 2026" });
+    expect(saved.source).toMatchObject({ name: "@jordos_world on TikTok", url: TIKTOK });
+
+    // Another user can't see it.
+    const other = randomUUID();
+    await pool.query("insert into auth.users (id, email) values ($1, 'other@example.com')", [other]);
+    const otherAuth = { authorization: `Bearer ${await token(other)}` };
+    expect((await a.request(`/recipes/${encodeURIComponent(recipe.id)}`, { headers: otherAuth })).status).toBe(404);
+    await pool.query("delete from households where id in (select household_id from household_users where user_id = $1)", [other]);
   });
 });

@@ -21,7 +21,7 @@ export interface AssistantDeps {
   client?: Anthropic;
   store: PlannerStore;
   recipes: RecipeProvider;
-  importRecipe?: (url: string) => Promise<Recipe>;
+  importRecipe?: (req: { url?: string; text?: string }) => Promise<Recipe>;
 }
 
 /**

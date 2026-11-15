@@ -1,9 +1,10 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { MemoryStore, type PlannerStore } from "@mealplan/assistant";
 import { SAMPLE_RECIPES, type Recipe, type RecipeProvider } from "@mealplan/core";
 import { createPool, PostgresStore, postgresCatalog, postgresRecipeCache, type Claims, type Db } from "@mealplan/db";
 import {
-  createRecipeProvider, EdamamSource, fetchJsonLdRecipe, memoryCatalog, memoryRecipeCache, SpoonacularSource,
-  type RecipeCache, type RecipeSource,
+  createRecipeProvider, EdamamSource, fetchJsonLdRecipe, importRecipe, memoryCatalog, memoryRecipeCache, SpoonacularSource,
+  type ImportedRecipe, type ImportRequest, type RecipeCache, type RecipeSource,
 } from "@mealplan/recipes";
 import { devAuthenticator, supabaseAuthenticator, type Authenticator } from "./auth";
 
@@ -11,9 +12,34 @@ import { devAuthenticator, supabaseAuthenticator, type Authenticator } from "./a
 export interface RequestServices {
   store: PlannerStore;
   recipes: RecipeProvider;
-  /** Fetch a recipe page and save it to the user's household library. */
-  importRecipe(url: string): Promise<Recipe>;
+  /**
+   * Save a shared recipe to the user's household library: a TikTok link with the recipe
+   * as text or screenshots, a recipe web page, or pasted text / photos.
+   */
+  importRecipe(req: ImportRequest): Promise<ImportedRecipe>;
 }
+
+export interface BackendOptions {
+  sources?: RecipeSource[];
+  /** Claude client for reading pasted recipes and screenshots. Created on first use if absent. */
+  anthropic?: Anthropic;
+  /** Test seam: fetch and parse a recipe web page. */
+  fetchPage?: (url: string) => Promise<Recipe>;
+}
+
+/** A Claude client, created only when an import actually needs one (so the API starts without a key). */
+function lazyClient(given?: Anthropic): () => Promise<Anthropic> {
+  let client = given;
+  return async () => {
+    if (!client) {
+      const { default: AnthropicSdk } = await import("@anthropic-ai/sdk");
+      client = new AnthropicSdk();
+    }
+    return client;
+  };
+}
+
+const defaultFetchPage = (url: string) => fetchJsonLdRecipe(url, { provider: "import" });
 
 export interface Backend {
   mode: "supabase" | "dev";
@@ -29,9 +55,10 @@ export function liveSources(): RecipeSource[] {
 const logSourceError = (provider: string, err: unknown) => console.warn(`[recipes] ${provider} failed:`, err instanceof Error ? err.message : err);
 
 /** Production: Supabase Auth tokens, Supabase Postgres with RLS, Postgres-backed recipe cache. */
-export function supabaseBackend(opts: { pool: Db; supabaseUrl: string; jwtSecret?: string; sources?: RecipeSource[] }): Backend {
+export function supabaseBackend(opts: BackendOptions & { pool: Db; supabaseUrl: string; jwtSecret?: string }): Backend {
   const cache = postgresRecipeCache(opts.pool);
   const sources = opts.sources ?? liveSources();
+  const client = lazyClient(opts.anthropic);
   return {
     mode: "supabase",
     authenticate: supabaseAuthenticator({ url: opts.supabaseUrl, jwtSecret: opts.jwtSecret }),
@@ -41,10 +68,10 @@ export function supabaseBackend(opts: { pool: Db; supabaseUrl: string; jwtSecret
       return {
         store,
         recipes: createRecipeProvider({ catalog, sources, cache, onSourceError: logSourceError }),
-        async importRecipe(url) {
+        async importRecipe(req) {
           const household = await store.getHousehold(claims.sub);
-          const recipe = await fetchJsonLdRecipe(url, { provider: "import" });
-          return catalog.importForHousehold(recipe, household.id);
+          const imported = await importRecipe(req, { client: await client(), fetchPage: opts.fetchPage ?? defaultFetchPage });
+          return { ...imported, recipe: await catalog.importForHousehold(imported.recipe, household.id) };
         },
       };
     },
@@ -55,8 +82,9 @@ export function supabaseBackend(opts: { pool: Db; supabaseUrl: string; jwtSecret
  * Local development without Supabase: x-user-id header, in-memory data, the seed
  * recipes plus any live sources with keys. Refuses to run with NODE_ENV=production.
  */
-export function devBackend(opts: { sources?: RecipeSource[]; recipes?: Recipe[]; cache?: RecipeCache } = {}): Backend {
+export function devBackend(opts: BackendOptions & { recipes?: Recipe[]; cache?: RecipeCache } = {}): Backend {
   const store = new MemoryStore();
+  const client = lazyClient(opts.anthropic);
   const cache = opts.cache ?? memoryRecipeCache();
   const sources = opts.sources ?? liveSources();
   const imports = new Map<string, Recipe[]>();
@@ -69,10 +97,10 @@ export function devBackend(opts: { sources?: RecipeSource[]; recipes?: Recipe[];
       return {
         store,
         recipes: createRecipeProvider({ catalog: memoryCatalog([...own, ...base]), sources, cache, onSourceError: logSourceError }),
-        async importRecipe(url) {
-          const recipe = await fetchJsonLdRecipe(url, { provider: "import" });
-          imports.set(claims.sub, [...(imports.get(claims.sub) ?? []), recipe]);
-          return recipe;
+        async importRecipe(req) {
+          const imported = await importRecipe(req, { client: await client(), fetchPage: opts.fetchPage ?? defaultFetchPage });
+          imports.set(claims.sub, [...(imports.get(claims.sub) ?? []), imported.recipe]);
+          return imported;
         },
       };
     },

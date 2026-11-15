@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { ScrollView, Text, TextInput, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import type { Diet } from "@mealplan/core";
+import { AddRecipe } from "@/components/AddRecipe";
 import { HouseholdSwitcher } from "@/components/HouseholdSwitcher";
 import { Button, Card, Muted, Segmented } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -13,8 +13,6 @@ export default function SettingsScreen() {
   const c = useTheme();
   const auth = useAuth();
   const h = useAsync(api.household);
-  const [link, setLink] = useState("");
-  const [importMsg, setImportMsg] = useState<string | null>(null);
 
   // Account first-class: it must stay reachable (with sign-out) even when the household can't load.
   const account = (
@@ -44,16 +42,6 @@ export default function SettingsScreen() {
     );
   }
 
-  async function importLink() {
-    setImportMsg("Importing…");
-    try {
-      const r = await api.importRecipe(link.trim());
-      setImportMsg(`Added “${r.title}” to your recipes.`);
-      setLink("");
-    } catch (e) {
-      setImportMsg(e instanceof Error ? e.message : "Couldn't import that link.");
-    }
-  }
   const household = h.data;
   const save = async (patch: Parameters<typeof api.updateHousehold>[0]) => h.setData(await api.updateHousehold(patch));
 
@@ -81,14 +69,7 @@ export default function SettingsScreen() {
         <Text style={{ color: c.text, fontWeight: "700" }}>Pantry staples</Text>
         <Muted>{household.pantry.join(", ") || "None yet"}</Muted>
       </Card>
-      <Card>
-        <Text style={{ color: c.text, fontWeight: "700" }}>Add a recipe from a link</Text>
-        <Muted>Paste a recipe page. It needs nutrition info so the planner can use it. Only your household sees it.</Muted>
-        <TextInput value={link} onChangeText={setLink} placeholder="https://…" placeholderTextColor={c.muted} autoCapitalize="none" inputMode="url"
-          style={{ color: c.text, backgroundColor: c.surface, borderRadius: 12, padding: space.md }} />
-        <Button label="Add recipe" variant="ghost" disabled={!link.startsWith("http")} onPress={importLink} />
-        {importMsg && <Muted>{importMsg}</Muted>}
-      </Card>
+      <AddRecipe />
       {account}
     </ScrollView>
   );

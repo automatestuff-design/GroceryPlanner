@@ -1,5 +1,6 @@
 import type { Diet, Macros, Recipe } from "@mealplan/core";
-import { buildRecipe, deriveMealTypes, hasUsableNutrition, toIngredient } from "../normalize";
+import { buildRecipe, deriveMealTypes, hasUsableNutrition, parseIngredientLine, toIngredient } from "../normalize";
+import { calculateNutrition } from "../nutrition/calculate";
 
 /**
  * schema.org/Recipe JSON-LD, the markup most recipe sites publish for search engines.
@@ -49,13 +50,30 @@ export interface JsonLdContext {
 }
 
 export function recipeFromJsonLd(ld: Json, ctx: JsonLdContext): Recipe {
-  const nutrition = parseNutrition(ld.nutrition as Json | undefined);
-  const servings = parseYield(ld.recipeYield) ?? (parseServingSize(ld.nutrition as Json | undefined) ? 1 : undefined);
-  if (!nutrition) throw new JsonLdError("No nutrition information on this recipe, so it can't be planned with.");
+  const published = parseNutrition(ld.nutrition as Json | undefined);
+  const servings = parseYield(ld.recipeYield) ?? (published && parseServingSize(ld.nutrition as Json | undefined) ? 1 : undefined);
   if (!servings) throw new JsonLdError("The recipe doesn't say how many servings it makes.");
 
-  const lines = asArray(ld.recipeIngredient ?? ld.ingredients).map(String).filter(Boolean);
+  const lines = asArray(ld.recipeIngredient ?? ld.ingredients).map(String).filter(Boolean).map(decodeEntities);
   if (!lines.length) throw new JsonLdError("No ingredients found.");
+  const ingredients = lines.map((l) => toIngredient(l));
+
+  // Use the publisher's nutrition when given; otherwise calculate it from the ingredients.
+  let perServing = published;
+  let nutritionBasis: Recipe["nutritionBasis"] = { method: "published", missing: [], uncertain: [] };
+  if (!perServing) {
+    const calc = calculateNutrition(
+      lines.map((text) => {
+        const p = parseIngredientLine(text);
+        const hasAmount = /\d|[½⅓⅔¼¾⅛]/.test(text);
+        return { text, name: p.name, quantity: hasAmount ? p.quantity : null, unit: hasAmount ? p.unit : null };
+      }),
+      servings,
+    );
+    if (!calc.lines.some((l) => l.status === "ok")) throw new JsonLdError("No nutrition information on this recipe, and the ingredient amounts couldn't be read to calculate it.");
+    perServing = calc.perServing;
+    nutritionBasis = { method: "calculated", database: "Canadian Nutrient File 2026", missing: calc.missing, uncertain: calc.uncertain };
+  }
 
   const host = new URL(ctx.url).hostname.replace(/^www\./, "");
   const title = String(ld.name ?? "Untitled recipe");
@@ -64,11 +82,12 @@ export function recipeFromJsonLd(ld: Json, ctx: JsonLdContext): Recipe {
   return buildRecipe({
     id: `${ctx.provider ?? "jsonld"}:${slug(host)}-${slug(title)}`.slice(0, 120),
     title: decodeEntities(title),
-    ingredients: lines.map((l) => toIngredient(decodeEntities(l))),
+    ingredients,
     steps: parseInstructions(ld.recipeInstructions),
     servings,
     timeMinutes: isoMinutes(ld.totalTime) ?? sumDefined(isoMinutes(ld.prepTime), isoMinutes(ld.cookTime)),
-    perServing: nutrition,
+    perServing,
+    nutritionBasis,
     mealTypes: deriveMealTypes(labels),
     cuisine: asArray(ld.recipeCuisine)[0] as string | undefined,
     tags: labels.slice(0, 10).map((t) => t.trim()).filter(Boolean),

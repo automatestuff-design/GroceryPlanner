@@ -51,7 +51,14 @@ The script needs local Postgres binaries (`/usr/lib/postgresql/*/bin`) and stubs
   only up to their TTL (expired rows are deleted) and plans keep just the id. The catalog
   stores only manifest sources with an accepted license, or a household's own private
   imports. See `docs/RECIPES.md` before adding a source.
-- **Recipes without nutrition are rejected** at normalisation (`hasUsableNutrition`).
+- **Nutrition is published by the source or calculated** with the Canadian Nutrient File
+  (`packages/recipes/src/nutrition/`), never estimated by Claude. Claude only transcribes
+  recipes (`extract.ts`). A recipe with no countable ingredient is rejected; anything not
+  counted is recorded in `nutritionBasis.missing` and shown to the user. New common
+  ingredients go in `nutrition/aliases.ts` with a code looked up in `data/cnf-2026.json`
+  (the test checks codes exist) and, if it was a mismatch, a row in `nutrition.test.ts`.
+- **TikTok:** no scraping. The public embed lookup returns no caption, so a TikTok import
+  needs the user's pasted text or screenshots; only the @handle and id come from the link.
 - **User-supplied URLs** go through `fetchJsonLdRecipe`, which resolves every hop and refuses
   private addresses. Don't fetch user URLs any other way.
 - **Dev auth** (`x-user-id` header) exists only in the in-memory backend and refuses to run

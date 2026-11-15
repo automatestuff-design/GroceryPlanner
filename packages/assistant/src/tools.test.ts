@@ -51,9 +51,16 @@ describe("assistant tools", () => {
 
   it("imports a recipe through the household importer", async () => {
     const c = ctx();
-    c.importRecipe = async () => SAMPLE_RECIPES[0]!;
-    const r = await runTool("import_recipe_from_url", { url: "https://example.org/r" }, c);
-    expect(JSON.parse(r.content).title).toBe(SAMPLE_RECIPES[0]!.title);
+    const calls: unknown[] = [];
+    c.importRecipe = async (req) => {
+      calls.push(req);
+      return { ...SAMPLE_RECIPES[0]!, source: { provider: "tiktok", name: "@cook on TikTok" }, nutritionBasis: { method: "calculated", database: "Canadian Nutrient File 2026", missing: ["1 scoop mystery powder"], uncertain: [], servingsEstimated: true } };
+    };
+    const r = JSON.parse((await runTool("save_recipe", { url: "https://www.tiktok.com/@cook/video/123456", recipeText: "2 eggs, 1 cup oats" }, c)).content);
+    expect(calls).toEqual([{ url: "https://www.tiktok.com/@cook/video/123456", text: "2 eggs, 1 cup oats" }]);
+    expect(r.title).toBe(SAMPLE_RECIPES[0]!.title);
+    expect(r.nutrition).toEqual({ how: "calculated from the ingredients (Canadian Nutrient File 2026)", notCounted: ["1 scoop mystery powder"], approximate: [], servingsEstimated: true });
+    expect((await runTool("save_recipe", {}, c)).isError).toBe(true);
   });
 
   it("has no grocer-ordering tools", () => {

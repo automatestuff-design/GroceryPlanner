@@ -3,7 +3,7 @@ import type { Allergen, Recipe } from "@mealplan/core";
 /** Column list shared by every recipe read. */
 export const RECIPE_COLUMNS = `id, title, meal_types, cuisine, time_minutes, servings, diets, tags, kid_friendly,
   ingredients, steps, nutrition_per_serving, longevity, image_url,
-  source_provider, source_name, source_url, attribution, license`;
+  source_provider, source_name, source_url, attribution, license, nutrition_basis`;
 
 export interface RecipeRow {
   id: string;
@@ -25,6 +25,7 @@ export interface RecipeRow {
   source_url: string | null;
   attribution: string | null;
   license: string | null;
+  nutrition_basis: Recipe["nutritionBasis"] | null;
 }
 
 export function rowToRecipe(r: RecipeRow): Recipe {
@@ -53,15 +54,16 @@ export function rowToRecipe(r: RecipeRow): Recipe {
             license: r.license ?? undefined,
           }
         : undefined,
+    ...(r.nutrition_basis ? { nutritionBasis: r.nutrition_basis } : {}),
   };
 }
 
 /** Columns written on insert/upsert, in the order `recipeToParams` returns them. */
 export const UPSERT_COLUMNS = `id, title, meal_types, cuisine, time_minutes, servings, diets, tags, kid_friendly,
   ingredients, steps, nutrition_per_serving, longevity, image_url,
-  source_provider, source_name, source_url, attribution, license, allergens`;
+  source_provider, source_name, source_url, attribution, license, allergens, nutrition_basis`;
 
-export const UPSERT_PLACEHOLDERS = Array.from({ length: 20 }, (_, i) => `$${i + 1}`).join(", ");
+export const UPSERT_PLACEHOLDERS = Array.from({ length: 21 },(_, i) => `$${i + 1}`).join(", ");
 
 export function recipeToParams(r: Recipe): unknown[] {
   const allergens = [...new Set(r.ingredients.flatMap((i) => i.allergens ?? []))] as Allergen[];
@@ -86,5 +88,6 @@ export function recipeToParams(r: Recipe): unknown[] {
     r.source?.attribution ?? null,
     r.source?.license ?? null,
     allergens,
+    r.nutritionBasis ? JSON.stringify(r.nutritionBasis) : null,
   ];
 }

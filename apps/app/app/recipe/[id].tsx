@@ -1,6 +1,7 @@
 import { useLocalSearchParams, Stack } from "expo-router";
 import { ScrollView, Text, View } from "react-native";
 import * as WebBrowser from "expo-web-browser";
+import { NutritionNote } from "@/components/AddRecipe";
 import { Button, Card, Muted, Title } from "@/components/ui";
 import { api } from "@/lib/api";
 import { qty } from "@/lib/format";
@@ -21,7 +22,7 @@ export default function RecipeScreen() {
       <Muted>{r.timeMinutes} min · serves {r.servings} · {n.calories} kcal · {n.proteinG} g protein · {n.fiberG} g fiber per serving</Muted>
       <Card>
         <Text style={{ color: c.text, fontWeight: "700" }}>Ingredients</Text>
-        {r.ingredients.map((i) => <Text key={i.name} style={{ color: c.text }}>• {qty(i.quantity, i.unit)} {i.name}</Text>)}
+        {r.ingredients.map((i, idx) => <Text key={`${idx}-${i.name}`} style={{ color: c.text }}>• {i.original ?? `${qty(i.quantity, i.unit)} ${i.name}`}</Text>)}
       </Card>
       {r.steps.length > 0 && (
         <Card>
@@ -34,9 +35,14 @@ export default function RecipeScreen() {
           ))}
         </Card>
       )}
+      {r.nutritionBasis && (
+        <Card>
+          <NutritionNote basis={r.nutritionBasis} />
+        </Card>
+      )}
       {r.source && (
         <Card>
-          <Muted>Recipe from {r.source.name}{r.source.attribution && r.source.attribution !== r.source.name ? ` · ${r.source.attribution}` : ""}{r.source.license ? ` · ${r.source.license}` : ""}</Muted>
+          <Muted>Recipe from {r.source.name}{r.source.attribution && !r.source.attribution.includes(r.source.name) ? ` · ${r.source.attribution}` : ""}{r.source.license ? ` · ${r.source.license}` : ""}</Muted>
           {r.source.url && (
             <Button label={r.steps.length ? `View on ${r.source.name}` : `Get the steps on ${r.source.name}`} variant={r.steps.length ? "ghost" : "primary"}
               onPress={() => WebBrowser.openBrowserAsync(r.source!.url!)} />
